@@ -222,7 +222,7 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
         _authorSearchResults.value = emptyList()
 
         val relaysToQuery = when (_selectedRelayOption.value) {
-            RelayOption.DEFAULT -> listOf(DEFAULT_SEARCH_RELAY)
+            RelayOption.DEFAULT -> DEFAULT_SEARCH_RELAYS
             RelayOption.ALL_RELAYS -> _searchRelays.value
             RelayOption.INDIVIDUAL -> listOfNotNull(_selectedRelayUrl.value)
         }
@@ -304,7 +304,7 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
 
         val activeFilter = _filter.value
         val relaysToQuery = when (_selectedRelayOption.value) {
-            RelayOption.DEFAULT -> listOf(DEFAULT_SEARCH_RELAY)
+            RelayOption.DEFAULT -> DEFAULT_SEARCH_RELAYS
             RelayOption.ALL_RELAYS -> _searchRelays.value
             RelayOption.INDIVIDUAL -> listOfNotNull(_selectedRelayUrl.value)
         }
@@ -637,7 +637,7 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
         onEvent: (NostrEvent) -> Boolean
     ) {
         val searchRelays = when (_selectedRelayOption.value) {
-            RelayOption.DEFAULT -> listOf(DEFAULT_SEARCH_RELAY)
+            RelayOption.DEFAULT -> DEFAULT_SEARCH_RELAYS
             RelayOption.ALL_RELAYS -> _searchRelays.value
             RelayOption.INDIVIDUAL -> listOfNotNull(_selectedRelayUrl.value)
         }
@@ -670,6 +670,8 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         const val DEFAULT_SEARCH_RELAY = "wss://search.nostrarchives.com"
+        /** Relays the search screen queries by default; results from both are merged. */
+        val DEFAULT_SEARCH_RELAYS = listOf("wss://syb.lol", "wss://relay.ditto.pub")
         // NIP-50 relays often take several seconds; results stream in meanwhile.
         private const val SEARCH_TIMEOUT_MS = 15_000L
         private const val METRICS_TIMEOUT_MS = 5000L

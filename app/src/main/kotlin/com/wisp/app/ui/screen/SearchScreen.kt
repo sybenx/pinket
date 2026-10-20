@@ -699,7 +699,7 @@ private fun RelaySelector(
     var showAddDialog by remember { mutableStateOf(false) }
 
     val displayText = when (selectedOption) {
-        RelayOption.DEFAULT -> SearchViewModel.DEFAULT_SEARCH_RELAY.removePrefix("wss://")
+        RelayOption.DEFAULT -> SearchViewModel.DEFAULT_SEARCH_RELAYS.joinToString(" + ") { it.removePrefix("wss://") }
         RelayOption.ALL_RELAYS -> stringResource(R.string.tab_all_relays)
         RelayOption.INDIVIDUAL -> selectedRelayUrl?.removePrefix("wss://") ?: ""
     }
@@ -726,7 +726,7 @@ private fun RelaySelector(
         ) {
             // Default search relay
             DropdownMenuItem(
-                text = { Text(SearchViewModel.DEFAULT_SEARCH_RELAY.removePrefix("wss://")) },
+                text = { Text(SearchViewModel.DEFAULT_SEARCH_RELAYS.joinToString(" + ") { it.removePrefix("wss://") }) },
                 onClick = {
                     onSelectDefault()
                     expanded = false

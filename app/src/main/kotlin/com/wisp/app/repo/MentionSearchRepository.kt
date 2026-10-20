@@ -86,7 +86,8 @@ class MentionSearchRepository(
         relaySearchJob = scope.launch(Dispatchers.IO) {
             val subId = "mention-${System.nanoTime()}"
             val filter = Filter(kinds = listOf(0), search = query, limit = 10)
-            relayPool.sendToRelayOrEphemeral(SEARCH_RELAY, ClientMessage.req(subId, filter))
+            val req = ClientMessage.req(subId, filter)
+            for (url in SEARCH_RELAYS) relayPool.sendToRelayOrEphemeral(url, req)
 
             val relayResults = mutableListOf<MentionCandidate>()
             val eventJob = launch {
@@ -117,6 +118,6 @@ class MentionSearchRepository(
     }
 
     private companion object {
-        const val SEARCH_RELAY = "wss://search.nostrarchives.com"
+        val SEARCH_RELAYS = listOf("wss://syb.lol", "wss://relay.ditto.pub")
     }
 }
