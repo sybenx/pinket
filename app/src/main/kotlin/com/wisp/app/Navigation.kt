@@ -395,6 +395,18 @@ fun WispNavHost(
         Nip19.decodeNostrUri(uri)?.toRoute()
     }
 
+    // A conversation opened from a DM notification sits on the DM list, like one opened from the
+    // Messages tab, so Back goes to the list and then home instead of straight to the feed
+    fun navigateToDeepLink(route: String) {
+        if (route.startsWith("dm/")) {
+            navController.navigate(Routes.DM_LIST) {
+                popUpTo(Routes.FEED) { inclusive = false }
+                launchSingleTop = true
+            }
+        }
+        navController.navigate(route)
+    }
+
     // Handle deep links when app is already past loading (onNewIntent)
     LaunchedEffect(deepLinkUri) {
         val route = deepLinkRoute ?: return@LaunchedEffect
@@ -403,7 +415,7 @@ fun WispNavHost(
         // Only navigate directly if we're past the loading/auth screens
         if (currentDest != null && currentDest !in setOf(Routes.LOADING, Routes.AUTH, Routes.SPLASH, Routes.ONBOARDING_PROFILE)) {
             onDeepLinkConsumed()
-            navController.navigate(route)
+            navigateToDeepLink(route)
         }
     }
 
@@ -805,7 +817,7 @@ fun WispNavHost(
                         navController.navigate(Routes.FEED) {
                             popUpTo(Routes.LOADING) { inclusive = true }
                         }
-                        navController.navigate(target)
+                        navigateToDeepLink(target)
                     } else {
                         navController.navigate(Routes.FEED) {
                             popUpTo(Routes.LOADING) { inclusive = true }
