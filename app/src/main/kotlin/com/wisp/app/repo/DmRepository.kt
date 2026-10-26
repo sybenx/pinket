@@ -217,6 +217,7 @@ class DmRepository(
     fun addMessage(msg: DmMessage, convKey: String) {
         if (msg.giftWrapId in deletedGiftWraps) return
         var isNewIncoming = false
+        var notifyInBackground = false
         synchronized(lock) {
             val existingMsgId = seenGiftWraps.get(msg.giftWrapId)
             if (existingMsgId != null) {
@@ -252,6 +253,10 @@ class DmRepository(
                 if (msg.createdAt >= soundEligibleAfter && appIsActive) {
                     isNewIncoming = true
                 }
+                // Not a backfilled old message, and the user isn't looking at the app
+                if (msg.createdAt >= soundEligibleAfter && !com.wisp.app.notify.DmNotifications.appVisible) {
+                    notifyInBackground = true
+                }
             }
 
             if (msg.participants.isNotEmpty()) {
@@ -269,6 +274,11 @@ class DmRepository(
         myPubkey?.let { persistence?.queueMessage(it, msg) }
         if (isNewIncoming) {
             _dmReceived.tryEmit(Unit)
+        }
+        val owner = myPubkey
+        if (notifyInBackground && context != null && owner != null) {
+            val text = if (msg.encryptedFileMetadata != null) context.getString(com.wisp.app.R.string.dm_notif_file) else msg.content
+            com.wisp.app.notify.DmNotifications.notifyIncoming(context, owner, msg.giftWrapId, msg.senderPubkey, text)
         }
         updateConversationList()
     }

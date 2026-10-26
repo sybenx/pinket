@@ -19,6 +19,13 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.wisp.app.MainActivity
 import com.wisp.app.R
+import com.wisp.app.db.EventEntity
+import com.wisp.app.db.EventEntity_
+import com.wisp.app.db.WispObjectBox
+import com.wisp.app.nostr.NostrEvent
+import com.wisp.app.nostr.ProfileData
+import com.wisp.app.nostr.toNpub
+import kotlinx.serialization.json.Json
 import java.util.concurrent.TimeUnit
 
 /**
@@ -35,6 +42,9 @@ object DmNotifications {
 
     /** Set by MainActivity: the in-app indicators cover DMs while the app is on screen. */
     @Volatile var appVisible = false
+
+    /** Lines already shown per sender, so a later message adds to the notification. */
+    private val shownLines = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
 
     fun isEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, false)
@@ -67,9 +77,25 @@ object DmNotifications {
         )
     }
 
+    /**
+     * A DM that reached the running app while it wasn't on screen. Wisp keeps its relay
+     * connections open in the background, so the app often gets a DM before the periodic check.
+     */
+    fun notifyIncoming(context: Context, ownerPubkey: String, giftWrapId: String, senderPubkey: String, text: String) {
+        if (appVisible || !isEnabled(context) || text.isBlank()) return
+        // Shared with the periodic check so the same DM never notifies twice
+        val state = context.getSharedPreferences("wisp_dm_notify_$ownerPubkey", Context.MODE_PRIVATE)
+        val notified = state.getStringSet("notified", emptySet())!!
+        if (giftWrapId in notified) return
+        state.edit().putStringSet("notified", HashSet(notified + giftWrapId)).apply()
+        show(context, senderPubkey, displayName(senderPubkey), listOf(text))
+    }
+
     /** One notification per sender; [lines] are that sender's new messages, oldest first. */
-    fun show(context: Context, senderPubkey: String, title: String, lines: List<String>) {
-        if (!hasPermission(context) || lines.isEmpty()) return
+    fun show(context: Context, senderPubkey: String, title: String, newLines: List<String>) {
+        if (!hasPermission(context) || newLines.isEmpty()) return
+        val lines = ((shownLines[senderPubkey] ?: emptyList()) + newLines).takeLast(6)
+        shownLines[senderPubkey] = lines
         ensureChannel(context)
         val open = Intent(context, MainActivity::class.java)
             .setAction(Intent.ACTION_VIEW)
@@ -102,8 +128,31 @@ object DmNotifications {
 
     /** Clear DM notifications once the user is looking at the app. */
     fun clearAll(context: Context) {
+        shownLines.clear()
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         nm.activeNotifications.filter { it.notification.group == NOTIF_GROUP }.forEach { nm.cancel(it.id) }
+    }
+
+    /** Name from the profile the app cached, else a short npub. */
+    fun displayName(pubkey: String): String {
+        val fallback = pubkey.toNpub().let { "${it.take(12)}…${it.takeLast(4)}" }
+        if (!WispObjectBox.isInitialized) return fallback
+        return try {
+            WispObjectBox.store.boxFor(EventEntity::class.java)
+                .query(EventEntity_.pubkey.equal(pubkey).and(EventEntity_.kind.equal(0)))
+                .orderDesc(EventEntity_.createdAt)
+                .build().use { it.findFirst() }
+                ?.let { e ->
+                    NostrEvent(
+                        id = e.eventId, pubkey = e.pubkey, created_at = e.createdAt, kind = e.kind,
+                        tags = Json.decodeFromString(e.tags), content = e.content, sig = e.sig
+                    )
+                }
+                ?.let { ProfileData.fromEvent(it)?.displayString }
+                ?: fallback
+        } catch (_: Exception) {
+            fallback
+        }
     }
 
     /** Deep link a DM notification opens: "wisp-dm:<peer pubkey hex>". */
