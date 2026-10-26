@@ -273,6 +273,13 @@
     <string name="dm_delete_conversation">Delete conversation</string>
     <string name="dm_delete_body">It\'s removed from this device and your DM relays are asked to delete it. Relays that don\'t support this may keep a copy, and the other person keeps theirs.</string>
     <string name="dm_deleted">Deleted</string>
+    <string name="dm_notif_channel">Direct messages</string>
+    <string name="dm_notif_file">Sent a file</string>
+    <string name="settings_notifications">Notifications</string>
+    <string name="settings_dm_notifications">DM notifications</string>
+    <string name="settings_dm_notifications_description">Checks your DM relays in the background about every 15 minutes, less often when the phone is idle. Shows the sender and message. Uses a little battery.</string>
+    <string name="settings_dm_notifications_read_only">Needs your private key on this device to read DMs, so it isn\'t available for read-only accounts.</string>
+    <string name="settings_dm_notifications_denied">Notifications are blocked for Wisp in Android settings.</string>
     <string name="relay_search_no_match">No saved relays match. Press Go to connect to it.</string>
     <string name="relay_list_no_match">No relays in this list match</string>
     <string name="btn_add_to_set">+Set</string>
@@ -622,7 +629,6 @@
     <string name="settings_profile_json_copied">Profile JSON copied</string>
 
     <!-- Notifications display -->
-    <string name="settings_notifications">Notifications</string>
     <string name="settings_notif_list_style">List style</string>
     <string name="settings_notif_list_style_description">Expanded: every notification shows its note, zap message, or poll inline. Compact: one-line rows you tap to open.</string>
     <string name="settings_notif_list_style_expanded">Expanded</string>

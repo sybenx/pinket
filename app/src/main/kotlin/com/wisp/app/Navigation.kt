@@ -389,6 +389,9 @@ fun WispNavHost(
     // Resolve deep link URI to a navigation route
     val deepLinkRoute = remember(deepLinkUri) {
         val uri = deepLinkUri ?: return@remember null
+        // DM notifications open the conversation with the sender
+        val dmPeer = uri.removePrefix("${com.wisp.app.notify.DmNotifications.DM_URI_SCHEME}:")
+        if (dmPeer != uri && dmPeer.length == 64) return@remember "dm/$dmPeer"
         Nip19.decodeNostrUri(uri)?.toRoute()
     }
 

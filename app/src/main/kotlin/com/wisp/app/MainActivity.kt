@@ -41,6 +41,7 @@ class MainActivity : FragmentActivity() {
         NsecPasteGuard.setActivity(this)
         enableEdgeToEdge()
         deepLinkUri.value = intent?.data?.toString()
+        com.wisp.app.notify.DmNotifications.schedule(this)
         setContent {
             val prefs = remember { getSharedPreferences("wisp_settings", Context.MODE_PRIVATE) }
             val interfacePrefs = remember { InterfacePreferences(this@MainActivity) }
@@ -106,6 +107,17 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        com.wisp.app.notify.DmNotifications.appVisible = true
+        com.wisp.app.notify.DmNotifications.clearAll(this)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        com.wisp.app.notify.DmNotifications.appVisible = false
     }
 
     override fun onNewIntent(intent: Intent) {

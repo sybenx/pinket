@@ -100,6 +100,18 @@ fun InterfaceScreen(
 ) {
     var isLargeText by remember { mutableStateOf(interfacePrefs.isLargeText()) }
     var newNotesHidden by remember { mutableStateOf(interfacePrefs.isNewNotesButtonHidden()) }
+    val canReadDms = remember { com.wisp.app.repo.KeyRepository(application).hasKeypair() }
+    var dmNotifs by remember {
+        mutableStateOf(com.wisp.app.notify.DmNotifications.isEnabled(application) && canReadDms)
+    }
+    var dmNotifsDenied by remember { mutableStateOf(false) }
+    val notifPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        dmNotifs = granted
+        dmNotifsDenied = !granted
+        com.wisp.app.notify.DmNotifications.setEnabled(application, granted)
+    }
     var clientTagEnabled by remember { mutableStateOf(interfacePrefs.isClientTagEnabled()) }
     var autoLoadMedia by remember { mutableStateOf(interfacePrefs.isAutoLoadMedia()) }
     var videoAutoPlay by remember { mutableStateOf(interfacePrefs.isVideoAutoPlay()) }
@@ -410,6 +422,49 @@ fun InterfaceScreen(
                         newNotesHidden = it
                         interfacePrefs.setNewNotesButtonHidden(it)
                         onChanged()
+                    },
+                    colors = wispSwitchColors()
+                )
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            // Notifications section
+            Text(
+                text = stringResource(R.string.settings_notifications),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.settings_dm_notifications), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        stringResource(
+                            when {
+                                !canReadDms -> R.string.settings_dm_notifications_read_only
+                                dmNotifsDenied -> R.string.settings_dm_notifications_denied
+                                else -> R.string.settings_dm_notifications_description
+                            }
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = dmNotifs,
+                    enabled = canReadDms,
+                    onCheckedChange = { on ->
+                        if (on && !com.wisp.app.notify.DmNotifications.hasPermission(application)) {
+                            notifPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            dmNotifs = on
+                            dmNotifsDenied = false
+                            com.wisp.app.notify.DmNotifications.setEnabled(application, on)
+                        }
                     },
                     colors = wispSwitchColors()
                 )
