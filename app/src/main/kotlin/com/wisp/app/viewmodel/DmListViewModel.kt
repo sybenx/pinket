@@ -9,8 +9,11 @@ import com.wisp.app.nostr.DmReaction
 import com.wisp.app.nostr.EncryptedMedia
 import com.wisp.app.nostr.Nip17
 import com.wisp.app.nostr.NostrEvent
+import com.wisp.app.nostr.LocalSigner
 import com.wisp.app.nostr.NostrSigner
 import com.wisp.app.nostr.toHex
+import com.wisp.app.relay.RelayPool
+import com.wisp.app.repo.DmDeletionPublisher
 import com.wisp.app.repo.DmRepository
 import com.wisp.app.repo.KeyRepository
 import com.wisp.app.repo.SigningMode
@@ -37,6 +40,13 @@ class DmListViewModel(app: Application) : AndroidViewModel(app) {
         muteRepo = muteRepository
     }
 
+    /** Delete a conversation here and ask relays to drop its gift wraps. */
+    fun deleteConversation(convKey: String, relayPool: RelayPool, signer: NostrSigner? = null) {
+        val removed = dmRepo?.deleteConversation(convKey) ?: return
+        val s = signer ?: keyRepo.getKeypair()?.let { LocalSigner(it.privkey, it.pubkey) } ?: return
+        DmDeletionPublisher.launch(removed, s, relayPool)
+    }
+
     fun markDmsRead() {
         dmRepo?.markDmsRead()
     }
@@ -44,6 +54,7 @@ class DmListViewModel(app: Application) : AndroidViewModel(app) {
     fun processGiftWrap(event: NostrEvent, relayUrl: String = "") {
         if (event.kind != 1059) return
         val repo = dmRepo ?: return
+        if (repo.isGiftWrapDeleted(event.id)) return
 
         val keypair = keyRepo.getKeypair() ?: return
         val myPubkey = keypair.pubkey.toHex()

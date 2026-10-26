@@ -602,11 +602,13 @@ class NotificationsViewModel(app: Application) : AndroidViewModel(app) {
 
                     val convKey = DmRepository.conversationKey(listOf(peerPubkey, signer.pubkeyHex))
                     val dmMsg = DmMessage(
-                        id = "${recipientWrap.id}:${System.currentTimeMillis() / 1000}",
+                        // Keyed by our own copy like the conversation screen does, so
+                        // deleting it targets a wrap addressed to us
+                        id = "${selfWrap.id}:${System.currentTimeMillis() / 1000}",
                         senderPubkey = signer.pubkeyHex,
                         content = text,
                         createdAt = System.currentTimeMillis() / 1000,
-                        giftWrapId = recipientWrap.id,
+                        giftWrapId = selfWrap.id,
                         relayUrls = sentRelayUrls,
                         participants = listOf(peerPubkey)
                     )
@@ -641,11 +643,13 @@ class NotificationsViewModel(app: Application) : AndroidViewModel(app) {
 
                     val convKey = DmRepository.conversationKey(listOf(peerPubkey, senderPubkeyHex))
                     val dmMsg = DmMessage(
-                        id = "${recipientWrap.id}:${System.currentTimeMillis() / 1000}",
+                        // Keyed by our own copy like the conversation screen does, so
+                        // deleting it targets a wrap addressed to us
+                        id = "${selfWrap.id}:${System.currentTimeMillis() / 1000}",
                         senderPubkey = senderPubkeyHex,
                         content = text,
                         createdAt = System.currentTimeMillis() / 1000,
-                        giftWrapId = recipientWrap.id,
+                        giftWrapId = selfWrap.id,
                         relayUrls = sentRelayUrls,
                         participants = listOf(peerPubkey)
                     )

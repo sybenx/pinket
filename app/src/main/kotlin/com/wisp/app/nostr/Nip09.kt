@@ -8,6 +8,10 @@ object Nip09 {
         )
     }
 
+    /** Deletion tags for several events of the same kind in one kind 5 event. */
+    fun buildDeletionTags(eventIds: List<String>, kind: Int): List<List<String>> =
+        eventIds.distinct().map { listOf("e", it) } + listOf(listOf("k", kind.toString()))
+
     /** Extract deleted event IDs from a kind 5 deletion event. */
     fun getDeletedEventIds(event: NostrEvent): List<String> =
         event.tags.filter { it.size >= 2 && it[0] == "e" }.map { it[1] }

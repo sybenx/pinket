@@ -43,6 +43,11 @@ class DmRepository(
         context?.getSharedPreferences("wisp_dm_${pubkeyHex ?: "anon"}", Context.MODE_PRIVATE)
     private var lastReadDmTimestamp: Long = prefs?.getLong("last_read_dm", 0L) ?: 0L
     private var latestGiftWrapTs: Long = prefs?.getLong("latest_gwrap_ts", 0L) ?: 0L
+    // Gift wraps the user deleted. Relays that ignore the deletion request keep serving
+    // them, so they're dropped on arrival instead of reappearing.
+    private val deletedGiftWraps: MutableSet<String> = ConcurrentHashMap.newKeySet<String>().apply {
+        prefs?.getStringSet("deleted_gwraps", null)?.let { addAll(it) }
+    }
     private val lock = Any()
     // No LRU eviction — DM conversations must never be silently dropped since there's no
     // persistence layer to recover them from, and seenEvents dedup blocks re-delivery.
@@ -116,6 +121,7 @@ class DmRepository(
         synchronized(lock) {
             if (generation != accountGeneration || owner != myPubkey) return
             for ((convKey, msg) in loaded) {
+                if (msg.giftWrapId in deletedGiftWraps) continue
                 if (seenGiftWraps.containsKey(msg.giftWrapId)) continue
                 seenGiftWraps[msg.giftWrapId] = msg.id
                 if (msg.rumorId.isNotEmpty()) {
@@ -209,6 +215,7 @@ class DmRepository(
     }
 
     fun addMessage(msg: DmMessage, convKey: String) {
+        if (msg.giftWrapId in deletedGiftWraps) return
         var isNewIncoming = false
         synchronized(lock) {
             val existingMsgId = seenGiftWraps.get(msg.giftWrapId)
@@ -442,7 +449,61 @@ class DmRepository(
         updateConversationList()
     }
 
+    fun isGiftWrapDeleted(giftWrapId: String): Boolean = giftWrapId in deletedGiftWraps
+
+    /**
+     * Delete messages by internal id from conversation [convKey]: they disappear right away,
+     * are removed from disk, and their gift wraps are remembered so re-delivery is ignored.
+     * Returns the removed messages so the caller can request deletion from relays.
+     */
+    fun deleteMessages(convKey: String, messageIds: Set<String>): List<DmMessage> {
+        val removed = synchronized(lock) {
+            val messages = conversations.get(convKey) ?: return emptyList()
+            val gone = messages.filter { it.id in messageIds }
+            messages.removeAll { it.id in messageIds }
+            // An emptied conversation would linger in the list as a blank row
+            if (messages.isEmpty()) conversations.remove(convKey)
+            forgetLocked(gone)
+            gone
+        }
+        tombstone(removed)
+        return removed
+    }
+
+    /** Delete a whole conversation. Same as [deleteMessages] for every message in it. */
+    fun deleteConversation(convKey: String): List<DmMessage> {
+        val removed = synchronized(lock) {
+            val gone = conversations.remove(convKey)?.toList() ?: emptyList()
+            conversationParticipants.remove(convKey)
+            forgetLocked(gone)
+            gone
+        }
+        tombstone(removed)
+        return removed
+    }
+
+    /** Must be called while holding [lock]. */
+    private fun forgetLocked(gone: List<DmMessage>) {
+        for (msg in gone) {
+            if (msg.rumorId.isNotEmpty()) rumorIdIndex.remove(msg.rumorId)
+            val target = msg.rumorId.ifEmpty { msg.id }
+            dmNotifIds.removeAll { it == "dm:${msg.id}" || it.endsWith(":$target") }
+            dmNotifItems.removeAll { it.id == "dm:${msg.id}" || it.referencedEventId == target }
+        }
+        if (gone.isNotEmpty()) _dmNotifications.value = dmNotifItems.sortedByDescending { it.timestamp }.take(200)
+    }
+
+    private fun tombstone(removed: List<DmMessage>) {
+        if (removed.isEmpty()) return
+        val ids = removed.map { it.giftWrapId }.filter { it.isNotEmpty() }
+        deletedGiftWraps.addAll(ids)
+        prefs?.edit()?.putStringSet("deleted_gwraps", HashSet(deletedGiftWraps))?.apply()
+        myPubkey?.let { persistence?.deleteByGiftWrapIds(it, ids) }
+        updateConversationList()
+    }
+
     fun addPendingGiftWrap(event: NostrEvent, relayUrl: String) {
+        if (event.id in deletedGiftWraps) return
         // Already-decrypted (and persisted) wraps must skip the queue — otherwise we'd
         // re-hit the signer for every wrap on every cold start.
         if (seenGiftWraps.containsKey(event.id)) {
@@ -490,6 +551,7 @@ class DmRepository(
         prefs = context?.getSharedPreferences("wisp_dm_$pubkeyHex", Context.MODE_PRIVATE)
         lastReadDmTimestamp = prefs?.getLong("last_read_dm", 0L) ?: 0L
         latestGiftWrapTs = prefs?.getLong("latest_gwrap_ts", 0L) ?: 0L
+        prefs?.getStringSet("deleted_gwraps", null)?.let { deletedGiftWraps.addAll(it) }
         // Hydrate decrypted DMs for the new account so we don't re-decrypt on switch.
         val generation = accountGeneration
         ioScope.launch { seedFromPersistence(pubkeyHex, generation) }
@@ -508,6 +570,7 @@ class DmRepository(
             dmRelayCache.evictAll()
             dmNotifItems.clear()
             dmNotifIds.clear()
+            deletedGiftWraps.clear()
         }
         synchronized(pendingLock) {
             pendingGiftWraps.clear()

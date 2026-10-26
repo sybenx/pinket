@@ -1414,6 +1414,7 @@ fun WispNavHost(
                 eventRepo = feedViewModel.eventRepo,
                 userPubkey = feedViewModel.getUserPubkey(),
                 signer = activeSigner,
+                relayPool = feedViewModel.relayPool,
                 onBack = null,
                 onConversation = { convo ->
                     if (convo.isGroup) {

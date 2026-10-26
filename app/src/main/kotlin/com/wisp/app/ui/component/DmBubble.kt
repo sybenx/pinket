@@ -43,6 +43,7 @@ import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.CurrencyBitcoin
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FlashOn
 import androidx.compose.ui.draw.scale
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -119,6 +120,7 @@ fun DmBubble(
     onProfileClick: ((String) -> Unit)? = null,
     onNoteClick: ((String) -> Unit)? = null,
     onDebugTap: ((DmMessage) -> Unit)? = null,
+    onDelete: ((DmMessage) -> Unit)? = null,
     noteActions: NoteActions? = null,
     resolvedEmojis: Map<String, String> = emptyMap(),
     unicodeEmojis: List<String> = emptyList(),
@@ -522,6 +524,21 @@ fun DmBubble(
                             },
                             label = "Text"
                         )
+                        if (onDelete != null) {
+                            DmActionPanelButton(
+                                modifier = Modifier.width(82.dp),
+                                onClick = { showActionsSheet = false; onDelete(message) },
+                                icon = {
+                                    Icon(
+                                        Icons.Outlined.Delete,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                },
+                                label = stringResource(R.string.btn_delete)
+                            )
+                        }
                         Spacer(Modifier.width(4.dp))
                     }
                 }

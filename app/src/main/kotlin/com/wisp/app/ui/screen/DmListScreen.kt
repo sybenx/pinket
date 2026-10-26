@@ -1,7 +1,9 @@
 package com.wisp.app.ui.screen
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -60,6 +62,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.wisp.app.R
+import com.wisp.app.relay.RelayPool
 import com.wisp.app.nostr.DmConversation
 import com.wisp.app.nostr.toNpub
 import com.wisp.app.nostr.NostrSigner
@@ -82,6 +85,7 @@ fun DmListScreen(
     eventRepo: EventRepository,
     userPubkey: String? = null,
     signer: NostrSigner? = null,
+    relayPool: RelayPool? = null,
     onBack: (() -> Unit)? = null,
     onConversation: (DmConversation) -> Unit,
     onNewGroupDm: () -> Unit = {},
@@ -97,6 +101,8 @@ fun DmListScreen(
     var showFabMenu by remember { mutableStateOf(false) }
     var joinError by remember { mutableStateOf<GroupListViewModel.JoinError?>(null) }
     var adminError by remember { mutableStateOf<GroupListViewModel.AdminError?>(null) }
+    var deleteTarget by remember { mutableStateOf<DmConversation?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     // Collect one-shot join rejections from the relay and surface them as a dialog.
     LaunchedEffect(groupListViewModel) {
@@ -184,7 +190,10 @@ fun DmListScreen(
             val notifiedGroups by groupListViewModel.notifiedGroups.collectAsState()
 
             when (selectedTab) {
-                0 -> DmListContent(conversations, eventRepo, onConversation)
+                0 -> DmListContent(
+                    conversations, eventRepo, onConversation,
+                    onDelete = if (relayPool != null) { convo -> deleteTarget = convo } else null
+                )
                 1 -> GroupListContent(
                     groups = groups,
                     eventRepo = eventRepo,
@@ -232,6 +241,18 @@ fun DmListScreen(
                 showDiscoverSheet = false
                 groupListViewModel.joinGroup(relayUrl, groupId, signer)
             }
+        )
+    }
+
+    deleteTarget?.let { convo ->
+        DmDeleteDialog(
+            title = stringResource(R.string.dm_delete_conversation_title),
+            onConfirm = {
+                deleteTarget = null
+                relayPool?.let { viewModel.deleteConversation(convo.conversationKey, it, signer) }
+                android.widget.Toast.makeText(context, R.string.dm_deleted, android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { deleteTarget = null }
         )
     }
 
@@ -302,7 +323,8 @@ fun DmListScreen(
 private fun DmListContent(
     conversations: List<DmConversation>,
     eventRepo: EventRepository,
-    onConversation: (DmConversation) -> Unit
+    onConversation: (DmConversation) -> Unit,
+    onDelete: ((DmConversation) -> Unit)? = null
 ) {
     if (conversations.isEmpty()) {
         Column(
@@ -329,7 +351,8 @@ private fun DmListContent(
                 ConversationRow(
                     convo = convo,
                     eventRepo = eventRepo,
-                    onClick = { onConversation(convo) }
+                    onClick = { onConversation(convo) },
+                    onDelete = onDelete?.let { { it(convo) } }
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline, thickness = 0.5.dp)
             }
@@ -618,59 +641,73 @@ private fun GroupFlagSwitch(
 private fun ConversationRow(
     convo: DmConversation,
     eventRepo: EventRepository,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onDelete: (() -> Unit)? = null
 ) {
     val lastMsg = convo.messages.lastOrNull()
+    var showMenu by remember { mutableStateOf(false) }
 
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-    ) {
-        if (convo.isGroup) {
-            GroupAvatarCluster(participants = convo.participants, eventRepo = eventRepo)
-        } else {
-            val profile = remember(convo.peerPubkey) { eventRepo.getProfileData(convo.peerPubkey) }
-            ProfilePicture(url = profile?.picture)
+    Box {
+        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.dm_delete_conversation), color = MaterialTheme.colorScheme.error) },
+                onClick = { showMenu = false; onDelete?.invoke() }
+            )
         }
-
-        Spacer(Modifier.width(12.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            val displayName = if (convo.isGroup) {
-                convo.participants.take(3).joinToString(", ") { pk ->
-                    eventRepo.getProfileData(pk)?.displayString ?: pk.toNpub().let { "${it.take(12)}...${it.takeLast(4)}" }
-                }.let { if (convo.participants.size > 3) "$it +${convo.participants.size - 3}" else it }
+        @OptIn(ExperimentalFoundationApi::class)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = if (onDelete != null) { { showMenu = true } } else null
+                )
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            if (convo.isGroup) {
+                GroupAvatarCluster(participants = convo.participants, eventRepo = eventRepo)
             } else {
-                eventRepo.getProfileData(convo.peerPubkey)?.displayString
-                    ?: convo.peerPubkey.toNpub().let { "${it.take(12)}...${it.takeLast(4)}" }
+                val profile = remember(convo.peerPubkey) { eventRepo.getProfileData(convo.peerPubkey) }
+                ProfilePicture(url = profile?.picture)
             }
 
-            Text(
-                text = displayName,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            lastMsg?.let {
+            Spacer(Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                val displayName = if (convo.isGroup) {
+                    convo.participants.take(3).joinToString(", ") { pk ->
+                        eventRepo.getProfileData(pk)?.displayString ?: pk.toNpub().let { "${it.take(12)}...${it.takeLast(4)}" }
+                    }.let { if (convo.participants.size > 3) "$it +${convo.participants.size - 3}" else it }
+                } else {
+                    eventRepo.getProfileData(convo.peerPubkey)?.displayString
+                        ?: convo.peerPubkey.toNpub().let { "${it.take(12)}...${it.takeLast(4)}" }
+                }
+
                 Text(
-                    text = it.content,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                lastMsg?.let {
+                    Text(
+                        text = it.content,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
-        }
 
-        Text(
-            text = formatTimestamp(convo.lastMessageAt),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+            Text(
+                text = formatTimestamp(convo.lastMessageAt),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 

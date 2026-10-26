@@ -114,6 +114,22 @@ class DmPersistence {
         }
     }
 
+    /** Remove specific messages by gift wrap id (user deleted them). */
+    fun deleteByGiftWrapIds(ownerPubkey: String, giftWrapIds: Collection<String>) {
+        if (ownerPubkey.isBlank() || giftWrapIds.isEmpty()) return
+        val keys = giftWrapIds.map { "$ownerPubkey|$it" }.toSet()
+        scope.launch {
+            try {
+                val entities = box.query(DmMessageEntity_.ownerPubkey.equal(ownerPubkey))
+                    .build().use { it.find() }
+                val toRemove = entities.filter { it.ownerPlusGiftWrap in keys }
+                if (toRemove.isNotEmpty()) box.remove(toRemove)
+            } catch (e: Exception) {
+                Log.w("DmPersistence", "deleteByGiftWrapIds failed: ${e.message}")
+            }
+        }
+    }
+
     /** Remove every conversation involving [pubkey] (mute / block flow). */
     fun deleteConversationsWithPubkey(ownerPubkey: String, pubkey: String) {
         if (ownerPubkey.isBlank() || pubkey.isBlank()) return

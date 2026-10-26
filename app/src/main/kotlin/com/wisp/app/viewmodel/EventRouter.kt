@@ -615,6 +615,7 @@ class EventRouter(
 
     private fun processGiftWrap(event: NostrEvent, relayUrl: String) {
         dmRepo.updateLatestGiftWrapTimestamp(event.created_at)
+        if (dmRepo.isGiftWrapDeleted(event.id)) return
         val keypair = keyRepo.getKeypair() ?: return
         val myPubkey = keypair.pubkey.toHex()
 

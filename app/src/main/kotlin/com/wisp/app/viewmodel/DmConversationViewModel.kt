@@ -17,6 +17,7 @@ import com.wisp.app.nostr.Nip13
 import com.wisp.app.nostr.Nip17
 import com.wisp.app.nostr.Nip19
 import com.wisp.app.nostr.Nip51
+import com.wisp.app.nostr.LocalSigner
 import com.wisp.app.nostr.NostrSigner
 import com.wisp.app.repo.MuteRepository
 import com.wisp.app.nostr.hexToByteArray
@@ -24,6 +25,7 @@ import com.wisp.app.nostr.toHex
 import com.wisp.app.relay.RelayConfig
 import com.wisp.app.relay.RelayEvent
 import com.wisp.app.relay.RelayPool
+import com.wisp.app.repo.DmDeletionPublisher
 import com.wisp.app.repo.DmRepository
 import com.wisp.app.repo.BlossomRepository
 import com.wisp.app.repo.KeyRepository
@@ -286,6 +288,22 @@ class DmConversationViewModel(app: Application) : AndroidViewModel(app) {
                 repo.markDecryptingEnd()
             }
         }
+    }
+
+    /** Delete one message here and ask the relays holding its gift wrap to drop it. */
+    fun deleteMessage(message: DmMessage, relayPool: RelayPool, signer: NostrSigner? = null) {
+        val removed = dmRepo?.deleteMessages(conversationKey, setOf(message.id)) ?: return
+        if (_selectedMessageId.value == message.id) _selectedMessageId.value = null
+        if (_replyingToMessage.value?.id == message.id) _replyingToMessage.value = null
+        val s = signer ?: keyRepo.getKeypair()?.let { LocalSigner(it.privkey, it.pubkey) } ?: return
+        DmDeletionPublisher.launch(removed, s, relayPool)
+    }
+
+    /** Delete every message in this conversation, locally and as one deletion request. */
+    fun deleteConversation(relayPool: RelayPool, signer: NostrSigner? = null) {
+        val removed = dmRepo?.deleteConversation(conversationKey) ?: return
+        val s = signer ?: keyRepo.getKeypair()?.let { LocalSigner(it.privkey, it.pubkey) } ?: return
+        DmDeletionPublisher.launch(removed, s, relayPool)
     }
 
     fun updateMessageText(value: String) {

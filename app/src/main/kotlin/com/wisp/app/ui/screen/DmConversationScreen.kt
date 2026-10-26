@@ -37,6 +37,7 @@ import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Image
@@ -47,7 +48,11 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -145,6 +150,9 @@ fun DmConversationScreen(
     val listState = rememberLazyListState()
     var showRelayInfo by remember { mutableStateOf(false) }
     var debugMessage by remember { mutableStateOf<DmMessage?>(null) }
+    var deleteTarget by remember { mutableStateOf<DmMessage?>(null) }
+    var confirmDeleteConversation by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
     var zapTargetMessage by remember { mutableStateOf<DmMessage?>(null) }
     var zapPendingSats by remember { mutableLongStateOf(0L) }
     var lastZappedMessage by remember { mutableStateOf<DmMessage?>(null) }
@@ -274,6 +282,23 @@ fun DmConversationScreen(
                                             fontSize = 10.sp
                                         )
                                     }
+                                }
+                            }
+                        }
+                        if (messages.isNotEmpty()) {
+                            Box {
+                                IconButton(onClick = { showMenu = true }) {
+                                    Icon(
+                                        Icons.Default.MoreVert,
+                                        contentDescription = stringResource(R.string.cd_more_options),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.dm_delete_conversation), color = MaterialTheme.colorScheme.error) },
+                                        onClick = { showMenu = false; confirmDeleteConversation = true }
+                                    )
                                 }
                             }
                         }
@@ -416,6 +441,7 @@ fun DmConversationScreen(
                             onProfileClick = onProfileClick,
                             onNoteClick = onNoteClick,
                             onDebugTap = { debugMessage = it },
+                            onDelete = { deleteTarget = it },
                             noteActions = noteActions,
                             resolvedEmojis = resolvedEmojis,
                             unicodeEmojis = unicodeEmojis,
@@ -623,6 +649,30 @@ fun DmConversationScreen(
         }
     }
 
+    deleteTarget?.let { msg ->
+        DmDeleteDialog(
+            title = stringResource(R.string.dm_delete_message_title),
+            onConfirm = {
+                deleteTarget = null
+                viewModel.deleteMessage(msg, relayPool, signer)
+                android.widget.Toast.makeText(context, R.string.dm_deleted, android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { deleteTarget = null }
+        )
+    }
+    if (confirmDeleteConversation) {
+        DmDeleteDialog(
+            title = stringResource(R.string.dm_delete_conversation_title),
+            onConfirm = {
+                confirmDeleteConversation = false
+                viewModel.deleteConversation(relayPool, signer)
+                android.widget.Toast.makeText(context, R.string.dm_deleted, android.widget.Toast.LENGTH_SHORT).show()
+                onBack()
+            },
+            onDismiss = { confirmDeleteConversation = false }
+        )
+    }
+
     debugMessage?.let { msg ->
         DmDebugDialog(message = msg, onDismiss = { debugMessage = null })
     }
@@ -646,6 +696,24 @@ fun DmConversationScreen(
             profileLookup = { pk -> peerProfile?.takeIf { it.pubkey == pk } }
         )
     }
+}
+
+/** Confirmation for deleting a DM or a whole conversation. Shared with the chat list. */
+@Composable
+internal fun DmDeleteDialog(title: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(stringResource(R.string.dm_delete_body)) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(stringResource(R.string.btn_delete), color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.btn_cancel)) }
+        }
+    )
 }
 
 @Composable
