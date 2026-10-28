@@ -32,6 +32,10 @@ import java.util.concurrent.ConcurrentHashMap
 private const val ADDRESS_INDEX_CAPACITY = 512
 // Below this many reactions a lopsided tally is normal (a friend double-tapping), not inflation
 private const val INFLATED_MIN_REACTIONS = 10
+// Coordinated engagement: at least half of 15+ reactors also reposting within 2 minutes.
+// Organic trending posts run 5-30%; engagement rings and point-scoring games run ~70%.
+private const val COORDINATED_MIN_REACTORS = 15
+private const val COORDINATED_PAIR_WINDOW_SECS = 120L
 
 data class ZapDetail(
     val pubkey: String,
@@ -140,10 +144,15 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
     private val relayFeedIds = HashSet<String>()
     // True while the relay feed holds a trending list (relay-ranked, not chronological)
     @Volatile private var relayFeedIsTrending = false
-    // Reactions per reactor on each target event: eventId -> (pubkey -> count). Trending
-    // relays rank by raw reaction count, so one account reacting over and over can push a
-    // post to the top; this lets the trending feed drop posts propped up that way.
-    private val reactorTally = LruCache<String, ConcurrentHashMap<String, Int>>(15000)
+    // Who engaged with each target event and when. Trending relays rank by raw counts, so
+    // one account reacting over and over, or a group that reacts and reposts together, can
+    // push a post to the top; this lets the trending feed drop posts propped up that way.
+    private class EngagerTally {
+        val reactions = ConcurrentHashMap<String, Int>()  // pubkey -> reaction count
+        val reactedAt = ConcurrentHashMap<String, Long>()  // pubkey -> first reaction time
+        val repostedAt = ConcurrentHashMap<String, Long>()  // pubkey -> first repost time
+    }
+    private val engagerTally = LruCache<String, EngagerTally>(15000)
     private val _relayFeed = MutableStateFlow<List<NostrEvent>>(emptyList())
     val relayFeed: StateFlow<List<NostrEvent>> = _relayFeed
 
@@ -504,7 +513,7 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
         if (!seenEventIds.add(event.id)) return  // atomic dedup across all relay threads
         if (event.created_at > System.currentTimeMillis() / 1000 + 30) return  // reject future-dated notes (30s grace for clock skew)
         // Before mute/WoT filtering: inflated counts come from exactly the accounts those drop
-        if (event.kind == 7) tallyReactor(event)
+        if (event.kind == 7 || event.kind == 6) tallyEngager(event)
         if (muteRepo?.isBlocked(event.pubkey) == true) return
         if ((event.kind == 1 || event.kind == Nip22.KIND_COMMENT || event.kind == 30023 || event.kind == 20 || event.kind == 21 || event.kind == 22 || event.kind == Nip69.KIND_ZAP_POLL) && muteRepo?.containsMutedWord(event.content) == true) return
         if (event.kind == 1 || event.kind == Nip22.KIND_COMMENT) {
@@ -1695,7 +1704,7 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
     }
 
     private fun trendingFeedAppend(event: NostrEvent) {
-        if (isInflatedByOneAccount(event.id)) return
+        if (isInflatedEngagement(event.id)) return
         synchronized(relayFeedList) {
             relayFeedIsTrending = true
             if (!relayFeedIds.add(event.id)) return
@@ -1705,19 +1714,37 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
         relayFeedInserted.trySend(Unit)
     }
 
-    private fun tallyReactor(event: NostrEvent) {
+    /** Records a reaction (kind 7) or repost (kind 6) against the event it targets. */
+    private fun tallyEngager(event: NostrEvent) {
         val targetEventId = event.tags.lastOrNull { it.size >= 2 && it[0] == "e" }?.get(1) ?: return
-        val tally = reactorTally.get(targetEventId)
-            ?: ConcurrentHashMap<String, Int>().also { reactorTally.put(targetEventId, it) }
-        tally.merge(event.pubkey, 1, Int::plus)
-        if (relayFeedIsTrending && isInflatedByOneAccount(targetEventId)) dropFromTrendingFeed(targetEventId)
+        val tally = engagerTally.get(targetEventId)
+            ?: EngagerTally().also { engagerTally.put(targetEventId, it) }
+        if (event.kind == 7) {
+            tally.reactions.merge(event.pubkey, 1, Int::plus)
+            tally.reactedAt.merge(event.pubkey, event.created_at, ::minOf)
+        } else {
+            tally.repostedAt.merge(event.pubkey, event.created_at, ::minOf)
+        }
+        if (relayFeedIsTrending && isInflatedEngagement(targetEventId)) dropFromTrendingFeed(targetEventId)
     }
 
-    /** True when most of an event's reactions come from a single account. */
-    private fun isInflatedByOneAccount(eventId: String): Boolean {
-        val counts = reactorTally.get(eventId)?.values ?: return false
+    /**
+     * True when an event's engagement looks manufactured: most of its reactions come from
+     * one account, or most of its reactors also reposted it within moments of reacting.
+     */
+    private fun isInflatedEngagement(eventId: String): Boolean {
+        val tally = engagerTally.get(eventId) ?: return false
+        val counts = tally.reactions.values
         val total = counts.sum()
-        return total >= INFLATED_MIN_REACTIONS && (counts.maxOrNull() ?: 0) * 2 > total
+        if (total >= INFLATED_MIN_REACTIONS && (counts.maxOrNull() ?: 0) * 2 > total) return true
+
+        val reactors = tally.reactedAt.size
+        if (reactors < COORDINATED_MIN_REACTORS) return false
+        val paired = tally.reactedAt.count { (pubkey, reactedAt) ->
+            val repostedAt = tally.repostedAt[pubkey] ?: return@count false
+            kotlin.math.abs(repostedAt - reactedAt) <= COORDINATED_PAIR_WINDOW_SECS
+        }
+        return paired * 2 >= reactors
     }
 
     private fun dropFromTrendingFeed(eventId: String) {
@@ -1784,7 +1811,7 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
         reactionCounts.evictAll()
         userReactions.evictAll()
         reactionDetails.evictAll()
-        reactorTally.evictAll()
+        engagerTally.evictAll()
         reactionEmojiUrls.evictAll()
         zapDetails.evictAll()
         userReposts.evictAll()
