@@ -30,12 +30,6 @@ import com.wisp.app.db.EventPersistence
 import java.util.concurrent.ConcurrentHashMap
 
 private const val ADDRESS_INDEX_CAPACITY = 512
-// Below this many reactions a lopsided tally is normal (a friend double-tapping), not inflation
-private const val INFLATED_MIN_REACTIONS = 10
-// Coordinated engagement: at least half of 15+ reactors also reposting within 2 minutes.
-// Organic trending posts run 5-30%; engagement rings and point-scoring games run ~70%.
-private const val COORDINATED_MIN_REACTORS = 15
-private const val COORDINATED_PAIR_WINDOW_SECS = 120L
 
 data class ZapDetail(
     val pubkey: String,
@@ -144,9 +138,8 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
     private val relayFeedIds = HashSet<String>()
     // True while the relay feed holds a trending list (relay-ranked, not chronological)
     @Volatile private var relayFeedIsTrending = false
-    // Who engaged with each target event and when. Trending relays rank by raw counts, so
-    // one account reacting over and over, or a group that reacts and reposts together, can
-    // push a post to the top; this lets the trending feed drop posts propped up that way.
+    // Who engaged with each target event and when, so the trending feed can drop posts whose
+    // engagement was manufactured (see InflatedEngagement)
     private class EngagerTally {
         val reactions = ConcurrentHashMap<String, Int>()  // pubkey -> reaction count
         val reactedAt = ConcurrentHashMap<String, Long>()  // pubkey -> first reaction time
@@ -1728,23 +1721,9 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
         if (relayFeedIsTrending && isInflatedEngagement(targetEventId)) dropFromTrendingFeed(targetEventId)
     }
 
-    /**
-     * True when an event's engagement looks manufactured: most of its reactions come from
-     * one account, or most of its reactors also reposted it within moments of reacting.
-     */
     private fun isInflatedEngagement(eventId: String): Boolean {
         val tally = engagerTally.get(eventId) ?: return false
-        val counts = tally.reactions.values
-        val total = counts.sum()
-        if (total >= INFLATED_MIN_REACTIONS && (counts.maxOrNull() ?: 0) * 2 > total) return true
-
-        val reactors = tally.reactedAt.size
-        if (reactors < COORDINATED_MIN_REACTORS) return false
-        val paired = tally.reactedAt.count { (pubkey, reactedAt) ->
-            val repostedAt = tally.repostedAt[pubkey] ?: return@count false
-            kotlin.math.abs(repostedAt - reactedAt) <= COORDINATED_PAIR_WINDOW_SECS
-        }
-        return paired * 2 >= reactors
+        return InflatedEngagement.isInflated(tally.reactions, tally.reactedAt, tally.repostedAt)
     }
 
     private fun dropFromTrendingFeed(eventId: String) {
