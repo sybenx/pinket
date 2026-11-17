@@ -6,9 +6,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.wisp.app.nostr.ClientMessage
 import com.wisp.app.nostr.Filter
-import com.wisp.app.nostr.Nip51
+import com.wisp.app.nostr.DittoTrending
 import com.wisp.app.nostr.NostrEvent
 import com.wisp.app.relay.RelayPool
+import com.wisp.app.repo.TrendingPreferences
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,9 +18,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * UI state for the onboarding topics step. Loads curated "trending" and
- * "all" hashtag sets (kind 30015) from feeds.nostrarchives.com and tracks
- * the user's selections. Publishing is delegated to the existing
+ * UI state for the onboarding topics step. Loads trending hashtags from the
+ * Ditto trend label (kind 1985, `#t`) on the trending relay and tracks the
+ * user's selections. Search suggestions come from the trending hashtags plus
+ * a small built-in list, since Ditto has no "all hashtags" set. Publishing is delegated to the existing
  * FeedViewModel.followHashtag / createInterestSet APIs once the user
  * continues — this class only owns the pick-list UI state.
  */
@@ -31,7 +33,7 @@ class TopicOnboardingViewModel(app: Application) : AndroidViewModel(app) {
     private val _loadingPopular = MutableStateFlow(true)
     val loadingPopular: StateFlow<Boolean> = _loadingPopular
 
-    private var allTopics: List<String> = emptyList()
+    private var allTopics: List<String> = BUILT_IN_TOPICS
 
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query
@@ -46,43 +48,28 @@ class TopicOnboardingViewModel(app: Application) : AndroidViewModel(app) {
 
     fun load(relayPool: RelayPool) {
         if (loadJob != null) return
-        loadJob = viewModelScope.launch {
-            launch { loadTopicsFor(relayPool, TRENDING_RELAY, "trending", "topics-trending") }
-            launch { loadTopicsFor(relayPool, ALL_RELAY, "all", "topics-all") }
-        }
+        loadJob = viewModelScope.launch { loadTrendingTopics(relayPool) }
     }
 
-    private suspend fun loadTopicsFor(
-        relayPool: RelayPool,
-        relayUrl: String,
-        dTag: String,
-        subId: String
-    ) {
+    private suspend fun loadTrendingTopics(relayPool: RelayPool) {
+        val relayUrl = TrendingPreferences(getApplication()).getRelay()
         try {
-            val filter = Filter(kinds = listOf(Nip51.KIND_INTEREST_SET), dTags = listOf(dTag))
-            relayPool.sendToRelayOrEphemeral(relayUrl, ClientMessage.req(subId, filter))
+            val filter = DittoTrending.labelFilter(relayUrl, "#t")
+            relayPool.sendToRelayOrEphemeral(relayUrl, ClientMessage.req(SUB_ID, filter))
 
-            var newest: NostrEvent? = null
-            collectUntilEose(relayPool, subId, 1, 6_000) { event ->
-                if (event.kind != Nip51.KIND_INTEREST_SET) return@collectUntilEose
-                val curr = newest
-                if (curr == null || event.created_at > curr.created_at) newest = event
-            }
+            val events = mutableListOf<NostrEvent>()
+            collectUntilEose(relayPool, SUB_ID, 1, 6_000) { event -> events.add(event) }
 
-            val tags = newest?.let { Nip51.parseInterestSet(it)?.hashtags?.toList() } ?: emptyList()
-            when (dTag) {
-                "trending" -> {
-                    _popularTopics.value = tags
-                    _loadingPopular.value = false
-                }
-                "all" -> {
-                    allTopics = tags
-                    filterSuggestions(_query.value)
-                }
-            }
+            val trending = DittoTrending.newestLabel(events, "#t", relayUrl)
+                ?.let { DittoTrending.parseHashtags(it) } ?: emptyList()
+            _popularTopics.value = trending.ifEmpty { BUILT_IN_TOPICS.take(20) }
+            allTopics = (trending + BUILT_IN_TOPICS).distinct()
+            filterSuggestions(_query.value)
         } catch (e: Exception) {
-            Log.e(TAG, "loadTopicsFor($dTag) failed: ${e.message}")
-            if (dTag == "trending") _loadingPopular.value = false
+            Log.e(TAG, "loadTrendingTopics failed: ${e.message}")
+            _popularTopics.value = BUILT_IN_TOPICS.take(20)
+        } finally {
+            _loadingPopular.value = false
         }
     }
 
@@ -156,7 +143,7 @@ class TopicOnboardingViewModel(app: Application) : AndroidViewModel(app) {
         loadJob = null
         _popularTopics.value = emptyList()
         _loadingPopular.value = true
-        allTopics = emptyList()
+        allTopics = BUILT_IN_TOPICS
         _query.value = ""
         _suggestions.value = emptyList()
         _selectedTopics.value = emptySet()
@@ -164,7 +151,17 @@ class TopicOnboardingViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         private const val TAG = "TopicOnboarding"
-        private const val TRENDING_RELAY = "wss://feeds.nostrarchives.com/hashtags/trending"
-        private const val ALL_RELAY = "wss://feeds.nostrarchives.com/hashtags/all"
+        private const val SUB_ID = "topics-trending"
+
+        /** Shown when the trending relay has nothing, and used for search suggestions. */
+        private val BUILT_IN_TOPICS = listOf(
+            "nostr", "bitcoin", "art", "photography", "music", "technology", "science",
+            "news", "books", "gaming", "food", "travel", "nature", "memes", "programming",
+            "privacy", "foss", "linux", "android", "ai", "movies", "sports", "fitness",
+            "health", "history", "philosophy", "politics", "economics", "design", "writing",
+            "poetry", "cats", "dogs", "gardening", "cooking", "coffee", "running", "hiking",
+            "space", "selfhosting", "lightning", "zaps", "grownostr", "introductions",
+            "plebchain", "foodstr", "photostr", "artstr", "musicstr", "devstr"
+        )
     }
 }

@@ -12,8 +12,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
@@ -23,18 +21,12 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.util.concurrent.TimeUnit
 
-data class LiveMetrics(val online: Int, val notes: Int)
-
 class SplashViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _profilePictures = MutableStateFlow<List<String>>(emptyList())
     val profilePictures: StateFlow<List<String>> = _profilePictures
 
-    private val _liveMetrics = MutableStateFlow<LiveMetrics?>(null)
-    val liveMetrics: StateFlow<LiveMetrics?> = _liveMetrics
-
     private var fetchJob: Job? = null
-    private var metricsJob: Job? = null
     private var okHttpClient: OkHttpClient? = null
 
     companion object {
@@ -52,9 +44,6 @@ class SplashViewModel(app: Application) : AndroidViewModel(app) {
 
         fetchJob = viewModelScope.launch(Dispatchers.IO) {
             fetchProfilePictures(client)
-        }
-        metricsJob = viewModelScope.launch(Dispatchers.IO) {
-            connectLiveMetrics(client)
         }
     }
 
@@ -142,27 +131,8 @@ class SplashViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun connectLiveMetrics(client: OkHttpClient) {
-        val req = Request.Builder()
-            .url("wss://api.nostrarchives.com/v1/ws/live-metrics")
-            .build()
-        client.newWebSocket(req, object : WebSocketListener() {
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                try {
-                    val obj = json.parseToJsonElement(text) as? JsonObject ?: return
-                    val online = obj["online"]?.jsonPrimitive?.intOrNull ?: return
-                    val notes = obj["notes"]?.jsonPrimitive?.intOrNull ?: return
-                    _liveMetrics.value = LiveMetrics(online = online, notes = notes)
-                } catch (_: Exception) {}
-            }
-
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {}
-        })
-    }
-
     override fun onCleared() {
         fetchJob?.cancel()
-        metricsJob?.cancel()
         okHttpClient?.let {
             it.dispatcher.cancelAll()
             it.connectionPool.evictAll()

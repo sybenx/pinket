@@ -26,7 +26,6 @@ import androidx.compose.material.icons.outlined.VisibilityOff
 import com.wisp.app.ui.component.QrScanner
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -73,7 +72,6 @@ import coil3.compose.AsyncImage
 import com.wisp.app.R
 import com.wisp.app.auth.NostrCredentialSaver
 import com.wisp.app.viewmodel.AuthViewModel
-import com.wisp.app.viewmodel.LiveMetrics
 import com.wisp.app.viewmodel.SplashViewModel
 import kotlinx.coroutines.launch
 
@@ -94,7 +92,6 @@ fun SplashScreen(
     startOnSignIn: Boolean = false
 ) {
     val profilePictures by viewModel.profilePictures.collectAsState()
-    val liveMetrics by viewModel.liveMetrics.collectAsState()
     val backgroundColor = MaterialTheme.colorScheme.background
     val surfaceVariant = MaterialTheme.colorScheme.surfaceVariant
 
@@ -230,7 +227,6 @@ fun SplashScreen(
                 ),
                 color = Color.White
             )
-            liveMetrics?.let { OnlineCard(it) }
 
             Spacer(Modifier.height(32.dp))
 
@@ -495,30 +491,6 @@ private fun NostrLoginSheet(
                     style = MaterialTheme.typography.bodySmall
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun OnlineCard(metrics: LiveMetrics) {
-    Spacer(Modifier.height(16.dp))
-    Card(shape = RoundedCornerShape(24.dp)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF4CAF50))
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = stringResource(R.string.splash_people_online, metrics.online),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurface
-            )
         }
     }
 }

@@ -34,6 +34,18 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
         keyRepo.reloadPrefs(keyRepo.getPubkeyHex())
     }
 
+    private val trendingPrefs = com.wisp.app.repo.TrendingPreferences(app)
+    private val _trendingRelay = MutableStateFlow(trendingPrefs.getRelay())
+    /** Ditto relay used for trending notes, people and onboarding topics. */
+    val trendingRelay: StateFlow<String> = _trendingRelay
+
+    /** Saves the trending relay; blank restores the default. False if the URL is not valid. */
+    fun saveTrendingRelay(url: String): Boolean {
+        if (!trendingPrefs.setRelay(url)) return false
+        _trendingRelay.value = trendingPrefs.getRelay()
+        return true
+    }
+
     private val _newRelayUrl = MutableStateFlow("")
     val newRelayUrl: StateFlow<String> = _newRelayUrl
 

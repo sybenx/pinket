@@ -23,6 +23,9 @@ import com.wisp.app.repo.ListRepository
 import com.wisp.app.repo.MetadataFetcher
 import com.wisp.app.repo.NotificationRepository
 import com.wisp.app.repo.ProfileRepository
+import com.wisp.app.repo.TrendingPreferences
+import com.wisp.app.nostr.DittoTrending
+import com.wisp.app.nostr.TrendingWindow
 import com.wisp.app.nostr.Nip57
 import com.wisp.app.nostr.Nip69
 import com.wisp.app.nostr.Nip88
@@ -62,7 +65,8 @@ class FeedSubscriptionManager(
     private val scope: CoroutineScope,
     private val processingContext: CoroutineContext,
     initialPubkeyHex: String?,
-    private val prefs: SharedPreferences
+    private val prefs: SharedPreferences,
+    private val trendingPrefs: TrendingPreferences
 ) {
     companion object {
         val FEED_KINDS = listOf(1, 6, 1068, 6969, 30023, 20, 21, 22)
@@ -100,11 +104,10 @@ class FeedSubscriptionManager(
     private val _selectedRelaySet = MutableStateFlow<RelaySet?>(null)
     val selectedRelaySet: StateFlow<RelaySet?> = _selectedRelaySet
 
-    private val _trendingMetric = MutableStateFlow(TrendingMetric.REACTIONS)
-    val trendingMetric: StateFlow<TrendingMetric> = _trendingMetric
+    private val _trendingWindow = MutableStateFlow(trendingPrefs.getWindow())
+    val trendingWindow: StateFlow<TrendingWindow> = _trendingWindow
 
-    private val _trendingTimeframe = MutableStateFlow(TrendingTimeframe.TODAY)
-    val trendingTimeframe: StateFlow<TrendingTimeframe> = _trendingTimeframe
+    val trendingRelayUrl: String get() = trendingPrefs.getRelay()
 
     private val _trendingMode = MutableStateFlow(TrendingMode.NOTES)
     val trendingMode: StateFlow<TrendingMode> = _trendingMode
@@ -639,20 +642,15 @@ class FeedSubscriptionManager(
 
     // -- Trending feed --
 
-    fun setTrendingMetric(metric: TrendingMetric) {
+    fun setTrendingWindow(window: TrendingWindow) {
         if (_trendingMode.value == TrendingMode.USERS) {
             _trendingMode.value = TrendingMode.NOTES
+            _trendingUsers.value = emptyList()
+            _trendingUsersLoading.value = false
         }
-        _trendingMetric.value = metric
+        _trendingWindow.value = window
+        trendingPrefs.setWindow(window)
         if (_feedType.value == FeedType.TRENDING) {
-            eventRepo.clearRelayFeed()
-            subscribeTrendingFeed()
-        }
-    }
-
-    fun setTrendingTimeframe(timeframe: TrendingTimeframe) {
-        _trendingTimeframe.value = timeframe
-        if (_feedType.value == FeedType.TRENDING && _trendingMode.value == TrendingMode.NOTES) {
             eventRepo.clearRelayFeed()
             subscribeTrendingFeed()
         }
@@ -683,10 +681,10 @@ class FeedSubscriptionManager(
         relayFeedEoseJob?.cancel()
         relayStatusMonitorJob?.cancel()
 
-        val url = buildTrendingRelayUrl(_trendingMetric.value, _trendingTimeframe.value)
+        val url = trendingPrefs.getRelay()
         _relayFeedStatus.value = RelayFeedStatus.Connecting
 
-        val filter = Filter(kinds = FEED_KINDS, limit = 100)
+        val filter = DittoTrending.notesFilter(_trendingWindow.value, System.currentTimeMillis() / 1000)
         val currentGen = relayFeedGeneration
         val subId = relayFeedSubId
 
@@ -732,6 +730,10 @@ class FeedSubscriptionManager(
         }
     }
 
+    /**
+     * "Up & coming" people: the distinct authors of what is hot on the trending relay right now,
+     * in rank order. Ditto publishes no trending-users list, so this is derived from sort:hot.
+     */
     private fun subscribeTrendingUsers() {
         invalidateDisplayedFeed()
         val oldSubId = relayFeedSubId
@@ -741,19 +743,37 @@ class FeedSubscriptionManager(
         relayFeedEoseJob?.cancel()
         relayStatusMonitorJob?.cancel()
 
-        val url = TRENDING_USERS_RELAY_URL
+        val url = trendingPrefs.getRelay()
         _trendingUsersLoading.value = true
         _trendingUsers.value = emptyList()
         _relayFeedStatus.value = RelayFeedStatus.Connecting
 
-        val filter = Filter(kinds = listOf(0), limit = 100)
+        val filter = DittoTrending.notesFilter(TrendingWindow.HOT, System.currentTimeMillis() / 1000)
         val currentGen = relayFeedGeneration
         val subId = relayFeedSubId
+        val profileSubId = "$subId-profiles"
 
         relayFeedEoseJob = scope.launch {
+            // Collect before sending so nothing that arrives quickly is missed
+            val notes = mutableListOf<NostrEvent>()
+            val profiles = mutableMapOf<String, NostrEvent>()
+            val collectJob = launch {
+                relayPool.relayEvents.collect { relayEvent ->
+                    if (relayFeedGeneration != currentGen) return@collect
+                    val event = relayEvent.event
+                    when (relayEvent.subscriptionId) {
+                        subId -> if (event.kind == 1) synchronized(notes) { notes.add(event) }
+                        profileSubId -> if (event.kind == 0) synchronized(profiles) {
+                            val prev = profiles[event.pubkey]
+                            if (prev == null || event.created_at > prev.created_at) profiles[event.pubkey] = event
+                        }
+                    }
+                }
+            }
+
             var connected = false
             for (attempt in 0..2) {
-                if (relayFeedGeneration != currentGen) return@launch
+                if (relayFeedGeneration != currentGen) { collectJob.cancel(); return@launch }
                 if (attempt > 0) {
                     relayPool.disconnectRelay(url)
                     delay(1500L)
@@ -763,7 +783,7 @@ class FeedSubscriptionManager(
 
                 val deadline = System.currentTimeMillis() + 5_000
                 while (System.currentTimeMillis() < deadline) {
-                    if (relayFeedGeneration != currentGen) return@launch
+                    if (relayFeedGeneration != currentGen) { collectJob.cancel(); return@launch }
                     if (relayPool.isRelayConnected(url)) {
                         connected = true
                         break
@@ -773,43 +793,42 @@ class FeedSubscriptionManager(
                 if (connected) break
             }
             if (!connected) {
-                _relayFeedStatus.value = RelayFeedStatus.ConnectionFailed("Failed to connect to trending users relay")
+                collectJob.cancel()
+                _relayFeedStatus.value = RelayFeedStatus.ConnectionFailed("Failed to connect to trending relay")
                 _trendingUsersLoading.value = false
                 return@launch
             }
 
             _relayFeedStatus.value = RelayFeedStatus.Subscribing
+            subManager.awaitEoseCount(subId, 1)
+            subManager.closeSubscription(subId)
 
-            // Collect kind 0 events as they arrive
-            val collected = mutableListOf<ProfileData>()
-            val seenPubkeys = mutableSetOf<String>()
-            val collectJob = launch {
-                relayPool.relayEvents.collect { relayEvent ->
-                    if (relayEvent.subscriptionId != subId) return@collect
-                    if (relayFeedGeneration != currentGen) return@collect
-                    val event = relayEvent.event
-                    if (event.kind == 0 && seenPubkeys.add(event.pubkey)) {
-                        val profile = ProfileData.fromEvent(event)
-                        if (profile != null) {
-                            profileRepo.updateFromEvent(event)
-                            collected.add(profile)
-                            _trendingUsers.value = collected.toList()
-                            if (collected.size == 1) {
-                                _relayFeedStatus.value = RelayFeedStatus.Streaming
-                            }
-                        }
-                    }
+            val authors = DittoTrending.distinctAuthors(synchronized(notes) { notes.toList() })
+            if (authors.isNotEmpty()) {
+                val missing = authors.filter { profileRepo.get(it) == null }
+                if (missing.isNotEmpty()) {
+                    relayPool.sendToRelayOrEphemeral(
+                        url,
+                        ClientMessage.req(profileSubId, Filter(kinds = listOf(0), authors = missing)),
+                        skipBadCheck = true
+                    )
+                    subManager.awaitEoseWithTimeout(profileSubId, timeoutMs = 8_000)
+                    subManager.closeSubscription(profileSubId)
                 }
             }
-
-            subManager.awaitEoseCount(subId, 1)
             collectJob.cancel()
+            if (relayFeedGeneration != currentGen) return@launch
 
-            if (collected.isEmpty()) {
-                _relayFeedStatus.value = RelayFeedStatus.NoEvents
-            } else {
-                _relayFeedStatus.value = RelayFeedStatus.Streaming
+            val fetched = synchronized(profiles) { profiles.toMap() }
+            val ranked = authors.mapNotNull { pubkey ->
+                fetched[pubkey]?.let { profileRepo.updateFromEvent(it) }
+                profileRepo.get(pubkey) ?: run {
+                    metadataFetcher.addToPendingProfiles(pubkey)
+                    null
+                }
             }
+            _trendingUsers.value = ranked
+            _relayFeedStatus.value = if (ranked.isEmpty()) RelayFeedStatus.NoEvents else RelayFeedStatus.Streaming
             _trendingUsersLoading.value = false
         }
     }
@@ -1280,8 +1299,7 @@ class FeedSubscriptionManager(
         _initLoadingState.value = InitLoadingState.SearchingProfile
         _selectedRelay.value = null
         _selectedRelaySet.value = null
-        _trendingMetric.value = TrendingMetric.REACTIONS
-        _trendingTimeframe.value = TrendingTimeframe.TODAY
+        _trendingWindow.value = trendingPrefs.getWindow()
         _trendingMode.value = TrendingMode.NOTES
         _trendingUsers.value = emptyList()
         _trendingUsersLoading.value = false
@@ -1365,7 +1383,7 @@ class FeedSubscriptionManager(
 
     /**
      * Fires the two supplementary event sources that make FOR_YOU feel more diverse than the
-     * plain follow/extended feed: (1) top-reactions and top-replies trending notes (fast), and
+     * plain follow/extended feed: (1) what is hot on the trending relay (fast), and
      * (2) notes for all followed hashtags via the search relay (slow, batched). All events
      * funnel through eventRepo.addEvent() so dedup + binary insert by created_at are free.
      */
@@ -1373,8 +1391,7 @@ class FeedSubscriptionManager(
         forYouSupplementaryJob?.cancel()
         val gen = ++forYouGeneration
         forYouSupplementaryJob = scope.launch {
-            launch { fetchTrendingForForYou(TrendingMetric.REACTIONS, gen) }
-            launch { fetchTrendingForForYou(TrendingMetric.REPLIES, gen) }
+            launch { fetchTrendingForForYou(gen) }
 
             val hashtags = interestRepo.getAllHashtags().toList()
             if (hashtags.isEmpty()) {
@@ -1389,10 +1406,10 @@ class FeedSubscriptionManager(
         }
     }
 
-    private suspend fun fetchTrendingForForYou(metric: TrendingMetric, gen: Long) {
-        val url = buildTrendingRelayUrl(metric, TrendingTimeframe.TODAY)
-        val subId = "foryou-trending-${metric.slug}-$gen"
-        val filter = Filter(kinds = FEED_KINDS, limit = 100)
+    private suspend fun fetchTrendingForForYou(gen: Long) {
+        val url = trendingPrefs.getRelay()
+        val subId = "foryou-trending-$gen"
+        val filter = DittoTrending.notesFilter(TrendingWindow.HOT, System.currentTimeMillis() / 1000)
         val collector = scope.launch {
             relayPool.relayEvents.collect { re ->
                 if (re.subscriptionId == subId && gen == forYouGeneration) {

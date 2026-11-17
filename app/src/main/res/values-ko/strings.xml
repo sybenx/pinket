@@ -627,8 +627,6 @@
     <string name="splash_log_in">로그인</string>
     <string name="online_now">현재 온라인</string>
     <string name="online_in_network">네트워크에서 %d명 온라인</string>
-    <string name="online_all_nostr">Nostr 전체에서 %d명 온라인</string>
-    <string name="splash_people_online">%d명 온라인</string>
     <string name="cd_wisp_logo">Wisp 로고</string>
 
     <!-- NIP-29 Chat Rooms -->

@@ -67,9 +67,6 @@ import android.content.Context
 import com.wisp.app.nostr.Filter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -83,26 +80,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 enum class FeedType { FOR_YOU, FOLLOWS, EXTENDED_FOLLOWS, RELAY, LIST, TRENDING }
 
 enum class TrendingMode { NOTES, USERS }
-
-enum class TrendingMetric(val slug: String, val label: String) {
-    REACTIONS("reactions", "Reactions"),
-    REPLIES("replies", "Replies"),
-    REPOSTS("reposts", "Reposts"),
-    ZAPS("zaps", "Zaps")
-}
-
-enum class TrendingTimeframe(val slug: String, val label: String) {
-    TODAY("today", "Today"),
-    WEEK("7d", "7d"),
-    MONTH("30d", "30d"),
-    YEAR("1y", "1y"),
-    ALL("all", "All")
-}
-
-const val TRENDING_USERS_RELAY_URL = "wss://feeds.nostrarchives.com/users/upandcoming"
-
-fun buildTrendingRelayUrl(metric: TrendingMetric, timeframe: TrendingTimeframe): String =
-    "wss://feeds.nostrarchives.com/notes/trending/${metric.slug}/${timeframe.slug}"
 
 sealed interface RelayFeedStatus {
     data object Idle : RelayFeedStatus
@@ -135,10 +112,7 @@ sealed class InitLoadingState {
     data object Done : InitLoadingState()
 }
 
-class FeedViewModel @JvmOverloads constructor(
-    app: Application,
-    private val liveMetricsClient: okhttp3.OkHttpClient = HttpClientFactory.createRelayClient()
-) : AndroidViewModel(app) {
+class FeedViewModel(app: Application) : AndroidViewModel(app) {
     private val accountScope = AccountSessionScope(viewModelScope)
     private val _accountSwitching = MutableStateFlow(false)
     val accountSwitching: StateFlow<Boolean> = _accountSwitching
@@ -346,7 +320,8 @@ class FeedViewModel @JvmOverloads constructor(
         relayPool, outboxRouter, subManager, eventRepo, contactRepo, listRepo, notifRepo,
         extendedNetworkRepo, interestRepo, keyRepo, healthTracker, relayScoreBoard, profileRepo,
         metadataFetcher, accountScope, processingDispatcher, pubkeyHex,
-        getApplication<Application>().getSharedPreferences("wisp_feed", android.content.Context.MODE_PRIVATE)
+        getApplication<Application>().getSharedPreferences("wisp_feed", android.content.Context.MODE_PRIVATE),
+        com.wisp.app.repo.TrendingPreferences(getApplication())
     )
 
     val eventRouter: EventRouter = EventRouter(
@@ -388,34 +363,6 @@ class FeedViewModel @JvmOverloads constructor(
         fetchEmojiSets = { listCrud.fetchEmojiSets() },
         getSigner = { signer }
     )
-
-    // -- Global online count from nostrarchives live-metrics --
-    private val _globalOnlineCount = MutableStateFlow<Int?>(null)
-    val globalOnlineCount: StateFlow<Int?> = _globalOnlineCount
-    private var liveMetricsSocket: okhttp3.WebSocket? = null
-
-    init {
-        viewModelScope.launch(Dispatchers.IO) {
-            connectLiveMetrics()
-        }
-    }
-
-    private fun connectLiveMetrics() {
-        val client = liveMetricsClient
-        val req = okhttp3.Request.Builder()
-            .url("wss://api.nostrarchives.com/v1/ws/live-metrics")
-            .build()
-        liveMetricsSocket = client.newWebSocket(req, object : okhttp3.WebSocketListener() {
-            override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
-                try {
-                    val obj = kotlinx.serialization.json.Json.parseToJsonElement(text)
-                        as? kotlinx.serialization.json.JsonObject ?: return
-                    val online = obj["online"]?.jsonPrimitive?.intOrNull ?: return
-                    _globalOnlineCount.value = online
-                } catch (_: Exception) {}
-            }
-        })
-    }
 
     // -- Exposed state --
     val feed: StateFlow<List<NostrEvent>> = combine(
@@ -462,8 +409,7 @@ class FeedViewModel @JvmOverloads constructor(
     val isRefreshing: StateFlow<Boolean> = feedSub.isRefreshing
     val relayFeedStatus: StateFlow<RelayFeedStatus> = feedSub.relayFeedStatus
     val loadingScreenComplete: StateFlow<Boolean> = feedSub.loadingScreenComplete
-    val trendingMetric: StateFlow<TrendingMetric> = feedSub.trendingMetric
-    val trendingTimeframe: StateFlow<TrendingTimeframe> = feedSub.trendingTimeframe
+    val trendingWindow: StateFlow<com.wisp.app.nostr.TrendingWindow> = feedSub.trendingWindow
     val trendingMode: StateFlow<TrendingMode> = feedSub.trendingMode
     val trendingUsers: StateFlow<List<com.wisp.app.nostr.ProfileData>> = feedSub.trendingUsers
     val trendingUsersLoading: StateFlow<Boolean> = feedSub.trendingUsersLoading
@@ -573,8 +519,8 @@ class FeedViewModel @JvmOverloads constructor(
     fun loadMore() = feedSub.loadMore()
     fun onVisibleRangeChanged(first: Int, last: Int) = feedSub.onViewportChanged(first, last)
     fun onViewportChanged(visibleEventIds: List<String>) = feedSub.onViewportChanged(visibleEventIds)
-    fun setTrendingMetric(metric: TrendingMetric) = feedSub.setTrendingMetric(metric)
-    fun setTrendingTimeframe(timeframe: TrendingTimeframe) = feedSub.setTrendingTimeframe(timeframe)
+    fun trendingRelayUrl(): String = feedSub.trendingRelayUrl
+    fun setTrendingWindow(window: com.wisp.app.nostr.TrendingWindow) = feedSub.setTrendingWindow(window)
     fun setTrendingMode(mode: TrendingMode) = feedSub.setTrendingMode(mode)
     fun setFeedContentFilter(filter: FeedContentFilter) = feedSub.setFeedContentFilter(filter)
     fun pauseEngagement() = feedSub.pauseEngagement()
@@ -889,7 +835,6 @@ class FeedViewModel @JvmOverloads constructor(
         nwcRepo.disconnect()
         sparkRepo.disconnect()
         relayPool.disconnectAll()
-        liveMetricsSocket?.close(1000, null)
         notifRepo.shutdown()
         eventRepo.shutdown()
         // viewModelScope is already cancelled here, so drain writers on a detached IO scope.

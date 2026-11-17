@@ -120,17 +120,14 @@ import com.wisp.app.viewmodel.FeedViewModel
 import com.wisp.app.viewmodel.InitLoadingState
 import com.wisp.app.viewmodel.PowStatus
 import com.wisp.app.viewmodel.RelayFeedStatus
-import com.wisp.app.viewmodel.TrendingMetric
 import com.wisp.app.viewmodel.TrendingMode
-import com.wisp.app.viewmodel.TrendingTimeframe
-import com.wisp.app.viewmodel.buildTrendingRelayUrl
+import com.wisp.app.nostr.TrendingWindow
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.itemsIndexed
 import com.wisp.app.ui.theme.WispThemeColors
-import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.outlined.CurrencyBitcoin
@@ -138,10 +135,8 @@ import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.HowToVote
 import androidx.compose.material.icons.outlined.Photo
-import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.outlined.Repeat
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.ui.draw.clip
@@ -149,7 +144,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.wisp.app.nostr.ProfileData
 import com.wisp.app.repo.AccountInfo
 import com.wisp.app.ui.component.FollowButton
-import com.wisp.app.viewmodel.TRENDING_USERS_RELAY_URL
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -236,8 +230,7 @@ fun FeedScreen(
     }
     val userPubkey = viewModel.getUserPubkey()
     val selectedList by viewModel.selectedList.collectAsState()
-    val trendingMetric by viewModel.trendingMetric.collectAsState()
-    val trendingTimeframe by viewModel.trendingTimeframe.collectAsState()
+    val trendingWindow by viewModel.trendingWindow.collectAsState()
     val trendingMode by viewModel.trendingMode.collectAsState()
     val trendingUsers by viewModel.trendingUsers.collectAsState()
     val trendingUsersLoading by viewModel.trendingUsersLoading.collectAsState()
@@ -247,26 +240,23 @@ fun FeedScreen(
     var prevSelectedListId by rememberSaveable { mutableStateOf(selectedList?.dTag) }
     var prevSelectedRelay by rememberSaveable { mutableStateOf(selectedRelay) }
     var prevSelectedRelaySet by rememberSaveable { mutableStateOf(selectedRelaySet?.name) }
-    var prevTrendingMetric by rememberSaveable { mutableStateOf(trendingMetric.name) }
-    var prevTrendingTimeframe by rememberSaveable { mutableStateOf(trendingTimeframe.name) }
+    var prevTrendingWindow by rememberSaveable { mutableStateOf(trendingWindow.name) }
     var prevTrendingMode by rememberSaveable { mutableStateOf(trendingMode.name) }
 
-    LaunchedEffect(feedType, selectedList, selectedRelay, selectedRelaySet, trendingMetric, trendingTimeframe, trendingMode) {
+    LaunchedEffect(feedType, selectedList, selectedRelay, selectedRelaySet, trendingWindow, trendingMode) {
         val feedTypeChanged = feedType.name != prevFeedType
         val listChanged = selectedList?.dTag != prevSelectedListId
         val relayChanged = selectedRelay != prevSelectedRelay
         val relaySetChanged = selectedRelaySet?.name != prevSelectedRelaySet
-        val metricChanged = trendingMetric.name != prevTrendingMetric
-        val timeframeChanged = trendingTimeframe.name != prevTrendingTimeframe
+        val windowChanged = trendingWindow.name != prevTrendingWindow
         val modeChanged = trendingMode.name != prevTrendingMode
 
-        if (feedTypeChanged || listChanged || relayChanged || relaySetChanged || metricChanged || timeframeChanged || modeChanged) {
+        if (feedTypeChanged || listChanged || relayChanged || relaySetChanged || windowChanged || modeChanged) {
             prevFeedType = feedType.name
             prevSelectedListId = selectedList?.dTag
             prevSelectedRelay = selectedRelay
             prevSelectedRelaySet = selectedRelaySet?.name
-            prevTrendingMetric = trendingMetric.name
-            prevTrendingTimeframe = trendingTimeframe.name
+            prevTrendingWindow = trendingWindow.name
             prevTrendingMode = trendingMode.name
             listState.scrollToItem(0)
         }
@@ -286,7 +276,6 @@ fun FeedScreen(
     var showRelayDropdown by remember { mutableStateOf(false) }
     var showOnlineSheet by remember { mutableStateOf(false) }
     val onlinePubkeys by viewModel.eventRepo.onlinePubkeys.collectAsState()
-    val globalOnlineCount by viewModel.globalOnlineCount.collectAsState()
     var showFeedTypeDropdown by remember { mutableStateOf(false) }
     var showSocialGraphDialog by remember { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -452,20 +441,6 @@ fun FeedScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                }
-                if (globalOnlineCount != null) {
-                    Spacer(Modifier.height(4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.foundation.Canvas(modifier = Modifier.size(8.dp)) {
-                            drawCircle(color = greenColor)
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            stringResource(R.string.online_all_nostr, globalOnlineCount ?: 0),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
                 }
                 Spacer(Modifier.height(16.dp))
                 FlowRow(
@@ -1091,11 +1066,9 @@ fun FeedScreen(
             }
             if (feedType == FeedType.TRENDING) {
                 TrendingFilterBar(
-                    metric = trendingMetric,
-                    timeframe = trendingTimeframe,
+                    window = trendingWindow,
                     mode = trendingMode,
-                    onMetricChange = { viewModel.setTrendingMetric(it) },
-                    onTimeframeChange = { viewModel.setTrendingTimeframe(it) },
+                    onWindowChange = { viewModel.setTrendingWindow(it) },
                     onModeChange = { viewModel.setTrendingMode(it) }
                 )
             }
@@ -1107,6 +1080,7 @@ fun FeedScreen(
                         users = trendingUsers,
                         isLoading = trendingUsersLoading,
                         relayFeedStatus = relayFeedStatus,
+                        relayUrl = viewModel.trendingRelayUrl(),
                         contactRepo = viewModel.contactRepo,
                         onProfileClick = onProfileClick,
                         onToggleFollow = { viewModel.toggleFollow(it) },
@@ -1162,7 +1136,7 @@ fun FeedScreen(
                             feedType == FeedType.TRENDING -> {
                                 RelayFeedEmptyState(
                                     status = relayFeedStatus,
-                                    relayUrl = buildTrendingRelayUrl(trendingMetric, trendingTimeframe),
+                                    relayUrl = viewModel.trendingRelayUrl(),
                                     onRetry = { viewModel.setFeedType(FeedType.TRENDING) }
                                 )
                             }
@@ -1269,7 +1243,7 @@ fun FeedScreen(
                         LaunchedEffect(
                             listState, viewModel, feed, feedType, contentFilter,
                             selectedList, selectedRelay, selectedRelaySet,
-                            trendingMetric, trendingTimeframe, trendingMode
+                            trendingWindow, trendingMode
                         ) {
                             val eventIds = feed.mapTo(HashSet()) { it.id }
                             snapshotFlow {
@@ -2449,22 +2423,11 @@ private fun NewNotesButton(
 
 @Composable
 private fun TrendingFilterBar(
-    metric: TrendingMetric,
-    timeframe: TrendingTimeframe,
+    window: TrendingWindow,
     mode: TrendingMode,
-    onMetricChange: (TrendingMetric) -> Unit,
-    onTimeframeChange: (TrendingTimeframe) -> Unit,
+    onWindowChange: (TrendingWindow) -> Unit,
     onModeChange: (TrendingMode) -> Unit
 ) {
-    val metricIcon = @Composable { m: TrendingMetric ->
-        when (m) {
-            TrendingMetric.REACTIONS -> Icon(Icons.Outlined.FavoriteBorder, contentDescription = m.label, modifier = Modifier.size(16.dp))
-            TrendingMetric.REPLIES -> Icon(Icons.AutoMirrored.Outlined.Reply, contentDescription = m.label, modifier = Modifier.size(16.dp))
-            TrendingMetric.REPOSTS -> Icon(Icons.Outlined.Repeat, contentDescription = m.label, modifier = Modifier.size(16.dp))
-            TrendingMetric.ZAPS -> Icon(painter = androidx.compose.ui.res.painterResource(com.wisp.app.R.drawable.ic_bolt), contentDescription = m.label, modifier = Modifier.size(14.dp))
-        }
-    }
-
     var showTimeframeDropdown by remember { mutableStateOf(false) }
 
     Surface(color = MaterialTheme.colorScheme.surface) {
@@ -2498,18 +2461,16 @@ private fun TrendingFilterBar(
                         color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
                     ) {}
                 }
-                TrendingMetric.entries.forEach { m ->
-                    FilterChip(
-                        selected = mode == TrendingMode.NOTES && m == metric,
-                        onClick = { onMetricChange(m) },
-                        label = { metricIcon(m) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primary,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                            selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary
-                        )
+                FilterChip(
+                    selected = mode == TrendingMode.NOTES,
+                    onClick = { onModeChange(TrendingMode.NOTES) },
+                    label = { Icon(Icons.AutoMirrored.Outlined.Article, contentDescription = "Notes", modifier = Modifier.size(16.dp)) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                        selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary
                     )
-                }
+                )
                 Spacer(Modifier.weight(1f))
                 AnimatedVisibility(visible = mode == TrendingMode.NOTES) {
                     Box {
@@ -2523,14 +2484,14 @@ private fun TrendingFilterBar(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    timeframe.label,
+                                    window.label,
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Spacer(Modifier.width(2.dp))
                                 Icon(
                                     Icons.Default.ArrowDropDown,
-                                    contentDescription = "Change timeframe",
+                                    contentDescription = "Change ranking",
                                     modifier = Modifier.size(18.dp),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -2540,14 +2501,14 @@ private fun TrendingFilterBar(
                             expanded = showTimeframeDropdown,
                             onDismissRequest = { showTimeframeDropdown = false }
                         ) {
-                            TrendingTimeframe.entries.forEach { t ->
+                            TrendingWindow.entries.forEach { t ->
                                 DropdownMenuItem(
                                     text = { Text(t.label) },
                                     onClick = {
                                         showTimeframeDropdown = false
-                                        onTimeframeChange(t)
+                                        onWindowChange(t)
                                     },
-                                    trailingIcon = if (t == timeframe) {{
+                                    trailingIcon = if (t == window) {{
                                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                                     }} else null
                                 )
@@ -2566,6 +2527,7 @@ private fun TrendingUsersContent(
     users: List<ProfileData>,
     isLoading: Boolean,
     relayFeedStatus: RelayFeedStatus,
+    relayUrl: String,
     contactRepo: com.wisp.app.repo.ContactRepository,
     onProfileClick: (String) -> Unit,
     onToggleFollow: (String) -> Unit,
@@ -2589,7 +2551,7 @@ private fun TrendingUsersContent(
         ) {
             RelayFeedEmptyState(
                 status = relayFeedStatus,
-                relayUrl = TRENDING_USERS_RELAY_URL,
+                relayUrl = relayUrl,
                 onRetry = onRetry
             )
         }

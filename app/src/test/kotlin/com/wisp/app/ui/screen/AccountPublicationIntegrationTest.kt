@@ -47,11 +47,7 @@ class AccountPublicationIntegrationTest {
         wallet = Mockito.mockConstruction(SparkRepository::class.java)
         nwc = Mockito.mockConstruction(NwcRepository::class.java)
         InterfacePreferences(app).setPostUndoTimerEnabled(false)
-        val socket = Mockito.mock(okhttp3.WebSocket::class.java)
-        val client = Mockito.mock(okhttp3.OkHttpClient::class.java, org.mockito.stubbing.Answer { call ->
-            if (call.method.name == "newWebSocket") socket else Mockito.RETURNS_DEFAULTS.answer(call)
-        })
-        feed = FeedViewModel(app, client)
+        feed = FeedViewModel(app)
         owners.put("feed", feed)
         editor = ComposeViewModel(app, SavedStateHandle())
         owners.put("editor", editor)

@@ -27,18 +27,23 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.wisp.app.nostr.DittoTrending
 import com.wisp.app.relay.RelayConfig
 import com.wisp.app.ui.util.relayMatchesQuery
 import com.wisp.app.ui.util.relaySearchQuery
@@ -101,6 +106,10 @@ fun RelayScreen(
             }
 
             Column(modifier = Modifier.padding(16.dp)) {
+                if (selectedTab == RelaySetType.SEARCH) {
+                    TrendingRelaySetting(viewModel)
+                    Spacer(Modifier.height(16.dp))
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
@@ -165,6 +174,52 @@ fun RelayScreen(
                     RelaySetType.SEARCH -> SimpleRelayList(searchRelays.filter { relayMatchesQuery(it, query) }, viewModel)
                     RelaySetType.BLOCKED -> SimpleRelayList(blockedRelays.filter { relayMatchesQuery(it, query) }, viewModel)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrendingRelaySetting(viewModel: RelayViewModel) {
+    val context = LocalContext.current
+    val saved by viewModel.trendingRelay.collectAsState()
+    var draft by rememberSaveable(saved) { mutableStateOf(saved) }
+    val invalidMsg = stringResource(R.string.trending_relay_invalid)
+    val savedMsg = stringResource(R.string.trending_relay_saved)
+
+    Column {
+        Text(
+            stringResource(R.string.trending_relay_title),
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            stringResource(R.string.trending_relay_description, DittoTrending.DEFAULT_RELAY),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { new -> if (!NsecPasteGuard.blockIfNsec(draft, new)) draft = new },
+                label = { Text(stringResource(R.string.trending_relay_title)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(8.dp))
+            TextButton(
+                enabled = draft.trim().trimEnd('/') != saved,
+                onClick = {
+                    val ok = viewModel.saveTrendingRelay(draft)
+                    Toast.makeText(context, if (ok) savedMsg else invalidMsg, Toast.LENGTH_SHORT).show()
+                }
+            ) {
+                Text(stringResource(R.string.trending_relay_save))
             }
         }
     }
