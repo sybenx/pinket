@@ -20,8 +20,11 @@ android {
         minSdk = 26
         targetSdk = 36
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode = 91
-        versionName = "1.3.0"
+        // Release builds take the version from the tag (v1.4.0 -> 1.4.0, code 10400)
+        val wispVersion = System.getenv("WISP_VERSION")
+        versionName = wispVersion ?: "1.4.0-dev"
+        versionCode = wispVersion?.split(".")?.map { it.toInt() }
+            ?.let { (a, b, c) -> a * 10000 + b * 100 + c } ?: 10399
         resValue("string", "app_name", "Wisp")
 
         ndk {
@@ -38,6 +41,19 @@ android {
         buildConfigField("String", "BREEZ_SDK_VERSION", "\"${libs.versions.breez.sdk.spark.get()}\"")
     }
 
+    // Release signing from env (CI secrets, or ~/.android/wisp locally); unsigned without it
+    val wispKeystore = System.getenv("WISP_KEYSTORE_FILE")
+    signingConfigs {
+        if (wispKeystore != null) {
+            create("release") {
+                storeFile = file(wispKeystore)
+                storePassword = System.getenv("WISP_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("WISP_KEY_ALIAS") ?: "wisp"
+                keyPassword = System.getenv("WISP_KEY_PASSWORD") ?: System.getenv("WISP_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = debugApplicationIdSuffix
@@ -48,6 +64,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (wispKeystore != null) signingConfig = signingConfigs.getByName("release")
         }
 
         create("staging") {

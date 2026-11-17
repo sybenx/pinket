@@ -1,0 +1,40 @@
+name: Release
+
+# A tag v1.2.3 builds the signed APK wisp-1.2.3.apk (cc.aaro.wisp) and attaches it to a
+# GitHub release, the file Obtainium installs from
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Build signed release
+        env:
+          WISP_KEYSTORE_B64: ${{ secrets.WISP_KEYSTORE_B64 }}
+          WISP_KEYSTORE_PASSWORD: ${{ secrets.WISP_KEYSTORE_PASSWORD }}
+        run: |
+          echo "$WISP_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          export WISP_KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
+          export WISP_VERSION="${GITHUB_REF_NAME#v}"
+          ./gradlew --no-daemon :app:assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk "wisp-${WISP_VERSION}.apk"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" wisp-*.apk --title "Wisp $GITHUB_REF_NAME" --notes-from-tag
