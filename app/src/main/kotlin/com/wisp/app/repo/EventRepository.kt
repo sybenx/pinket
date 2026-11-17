@@ -147,6 +147,16 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
     // Isolated relay feed state — completely separate from the main feed pipeline
     private val relayFeedList = mutableListOf<NostrEvent>()
     private val relayFeedIds = HashSet<String>()
+    // True while the relay feed holds a trending list (relay-ranked, not chronological)
+    @Volatile private var relayFeedIsTrending = false
+    // Who engaged with each target event and when, so the trending feed can drop posts whose
+    // engagement was manufactured (see InflatedEngagement)
+    private class EngagerTally {
+        val reactions = ConcurrentHashMap<String, Int>()  // pubkey -> reaction count
+        val reactedAt = ConcurrentHashMap<String, Long>()  // pubkey -> first reaction time
+        val repostedAt = ConcurrentHashMap<String, Long>()  // pubkey -> first repost time
+    }
+    private val engagerTally = LruCache<String, EngagerTally>(15000)
     private val _relayFeed = MutableStateFlow<List<NostrEvent>>(emptyList())
     val relayFeed: StateFlow<List<NostrEvent>> = _relayFeed
 
@@ -506,6 +516,8 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
         }
         if (!seenEventIds.add(event.id)) return  // atomic dedup across all relay threads
         if (event.created_at > System.currentTimeMillis() / 1000 + 30) return  // reject future-dated notes (30s grace for clock skew)
+        // Before mute/WoT filtering: inflated counts come from exactly the accounts those drop
+        if (event.kind == 7 || event.kind == 6) tallyEngager(event)
         if (muteRepo?.isBlocked(event.pubkey) == true) return
         if ((event.kind == 1 || event.kind == Nip22.KIND_COMMENT || event.kind == 30023 || event.kind == 20 || event.kind == 21 || event.kind == 22 || event.kind == Nip69.KIND_ZAP_POLL) && muteRepo?.containsMutedWord(event.content) == true) return
         if (event.kind == 1 || event.kind == Nip22.KIND_COMMENT) {
@@ -1842,7 +1854,9 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
     }
 
     private fun trendingFeedAppend(event: NostrEvent) {
+        if (isInflatedEngagement(event.id)) return
         synchronized(relayFeedList) {
+            relayFeedIsTrending = true
             if (!relayFeedIds.add(event.id)) return
             relayFeedList.add(event)  // append to end — preserves relay ordering
         }
@@ -1850,8 +1864,36 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
         relayFeedInserted.trySend(Unit)
     }
 
+    /** Records a reaction (kind 7) or repost (kind 6) against the event it targets. */
+    private fun tallyEngager(event: NostrEvent) {
+        val targetEventId = event.tags.lastOrNull { it.size >= 2 && it[0] == "e" }?.get(1) ?: return
+        val tally = engagerTally.get(targetEventId)
+            ?: EngagerTally().also { engagerTally.put(targetEventId, it) }
+        if (event.kind == 7) {
+            tally.reactions.merge(event.pubkey, 1, Int::plus)
+            tally.reactedAt.merge(event.pubkey, event.created_at, ::minOf)
+        } else {
+            tally.repostedAt.merge(event.pubkey, event.created_at, ::minOf)
+        }
+        if (relayFeedIsTrending && isInflatedEngagement(targetEventId)) dropFromTrendingFeed(targetEventId)
+    }
+
+    private fun isInflatedEngagement(eventId: String): Boolean {
+        val tally = engagerTally.get(eventId) ?: return false
+        return InflatedEngagement.isInflated(tally.reactions, tally.reactedAt, tally.repostedAt)
+    }
+
+    private fun dropFromTrendingFeed(eventId: String) {
+        synchronized(relayFeedList) {
+            if (!relayFeedIsTrending || !relayFeedIds.remove(eventId)) return
+            relayFeedList.removeAll { it.id == eventId }
+        }
+        relayFeedInserted.trySend(Unit)
+    }
+
     private fun relayFeedBinaryInsert(event: NostrEvent, sortTime: Long = event.created_at) {
         synchronized(relayFeedList) {
+            relayFeedIsTrending = false
             if (!relayFeedIds.add(event.id)) return
             var low = 0
             var high = relayFeedList.size
@@ -1867,6 +1909,7 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
 
     fun clearRelayFeed() {
         synchronized(relayFeedList) {
+            relayFeedIsTrending = false
             relayFeedList.clear()
             relayFeedIds.clear()
         }
@@ -1904,6 +1947,7 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
         reactionCounts.evictAll()
         userReactions.evictAll()
         reactionDetails.evictAll()
+        engagerTally.evictAll()
         reactionEmojiUrls.evictAll()
         zapDetails.evictAll()
         userReposts.evictAll()
