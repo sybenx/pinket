@@ -1025,7 +1025,10 @@ class FeedSubscriptionManager(
     fun onRelayFeedEventReceived() {
         if (_feedType.value != FeedType.RELAY && _feedType.value != FeedType.TRENDING) return
         val status = _relayFeedStatus.value
-        if (status is RelayFeedStatus.Subscribing || status is RelayFeedStatus.Connecting) {
+        // NoEvents too: EOSE can be handled before the events queued ahead of it are processed
+        if (status is RelayFeedStatus.Subscribing || status is RelayFeedStatus.Connecting ||
+            status is RelayFeedStatus.NoEvents
+        ) {
             _relayFeedStatus.value = RelayFeedStatus.Streaming
         }
     }
