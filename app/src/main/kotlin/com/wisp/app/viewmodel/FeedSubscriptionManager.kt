@@ -1346,13 +1346,17 @@ class FeedSubscriptionManager(
         if (hasRestoredFeedType) return
         hasRestoredFeedType = true
 
-        val savedName = prefs.getString(KEY_LAST_FEED_TYPE, null) ?: return
-        val savedType = try { FeedType.valueOf(savedName) } catch (_: Exception) { return }
+        // Launches open on Follows unless another feed was saved. Trending is somewhere to
+        // visit, not to land, so a saved Trending opens Follows too.
+        val savedType = prefs.getString(KEY_LAST_FEED_TYPE, null)
+            ?.let { runCatching { FeedType.valueOf(it) }.getOrNull() }
+            ?.takeIf { it != FeedType.TRENDING }
+            ?: FeedType.FOLLOWS
         if (savedType == _feedType.value) return
 
         Log.d("RLC", "[FeedSub] restoring saved feed type: $savedType")
         when (savedType) {
-            FeedType.FOLLOWS, FeedType.TRENDING, FeedType.EXTENDED_FOLLOWS -> setFeedType(savedType)
+            FeedType.FOLLOWS, FeedType.EXTENDED_FOLLOWS -> setFeedType(savedType)
             FeedType.RELAY -> {
                 val relaySetName = prefs.getString(KEY_LAST_RELAY_SET_NAME, null)
                 val relaySetRelays = prefs.getString(KEY_LAST_RELAY_SET_RELAYS, null)
