@@ -275,6 +275,7 @@ fun ArticleScreen(
                             is MdBlock.Image -> ArticleImage(block)
                             is MdBlock.CodeBlock -> ArticleCodeBlock(block)
                             is MdBlock.BlockQuote -> ArticleBlockQuote(block, emojiMap)
+                            is MdBlock.Table -> ArticleTable(block, emojiMap)
                             is MdBlock.NostrEmbed -> ArticleNostrEmbed(
                                 block = block,
                                 eventRepo = eventRepo,
@@ -541,6 +542,94 @@ private fun ArticleBlockQuote(block: MdBlock.BlockQuote, emojiMap: Map<String, S
     }
 }
 
+/**
+ * Small tables (up to 3 columns of short cells) draw as a grid. Wider or wordier ones,
+ * which can't fit across a phone, draw one card per row: the first cell as its title and
+ * the rest as labelled lines under it.
+ */
+@Composable
+private fun ArticleTable(block: MdBlock.Table, emojiMap: Map<String, String>) {
+    val asGrid = remember(block) {
+        block.header.size <= 3 && (block.rows + listOf(block.header)).all { row -> row.all { it.length <= 24 } }
+    }
+    if (asGrid) {
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+        ) {
+            Column {
+                ArticleTableRow(block.header, block.header.size, emojiMap, isHeader = true)
+                block.rows.forEach { row ->
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    ArticleTableRow(row, block.header.size, emojiMap, isHeader = false)
+                }
+            }
+        }
+    } else {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+            block.rows.forEach { row ->
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                        val title = formatInlineWithEmoji(row.getOrElse(0) { "" }, emojiMap)
+                        Text(
+                            text = title.text,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            inlineContent = title.inlineContent
+                        )
+                        for (col in 1 until block.header.size) {
+                            val value = row.getOrElse(col) { "" }
+                            if (value.isBlank()) continue
+                            val label = block.header[col].replace(Regex("""[*_`]"""), "")
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                            val formatted = formatInlineWithEmoji(value, emojiMap)
+                            Text(
+                                text = formatted.text,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                inlineContent = formatted.inlineContent
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArticleTableRow(cells: List<String>, columns: Int, emojiMap: Map<String, String>, isHeader: Boolean) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (isHeader) Modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)) else Modifier)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        for (col in 0 until columns) {
+            val formatted = formatInlineWithEmoji(cells.getOrElse(col) { "" }, emojiMap)
+            Text(
+                text = formatted.text,
+                style = if (isHeader) MaterialTheme.typography.labelLarge else MaterialTheme.typography.bodyMedium,
+                color = if (isHeader) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                inlineContent = formatted.inlineContent,
+                modifier = Modifier.weight(1f).padding(end = 8.dp)
+            )
+        }
+    }
+}
+
 @Composable
 private fun ArticleNostrEmbed(
     block: MdBlock.NostrEmbed,
@@ -760,7 +849,7 @@ private fun splitTextForEmojis(text: String, emojiMap: Map<String, String>): Lis
 
 // -- Markdown block parser --
 
-private sealed interface MdBlock {
+internal sealed interface MdBlock {
     data class Heading(val level: Int, val text: String) : MdBlock
     data class Paragraph(val text: String) : MdBlock
     data class Image(val url: String, val alt: String?) : MdBlock
@@ -768,6 +857,7 @@ private sealed interface MdBlock {
     data class BlockQuote(val text: String) : MdBlock
     data object HorizontalRule : MdBlock
     data class NostrEmbed(val content: String) : MdBlock
+    data class Table(val header: List<String>, val rows: List<List<String>>) : MdBlock
 }
 
 private val imageLineRegex = Regex("""^!\[([^\]]*)]\((\S+?)(?:\s+"[^"]*")?\)\s*$""")
@@ -784,7 +874,20 @@ private fun shortenNostrEntity(entity: String): String {
     }
 }
 
-private fun parseMarkdownBlocks(content: String): List<MdBlock> {
+// A GFM table's delimiter row: | --- | :---: | ---: |
+private val tableDelimiterRegex = Regex("""^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$""")
+
+private fun isTableStart(lines: List<String>, i: Int): Boolean =
+    lines[i].trim().let { it.startsWith("|") && it.length > 1 } &&
+        i + 1 < lines.size && tableDelimiterRegex.matches(lines[i + 1].trim())
+
+/** Cells of a table row, without the outer pipes; `\|` stays a literal pipe. */
+private fun splitTableRow(line: String): List<String> =
+    line.trim().removePrefix("|").removeSuffix("|")
+        .split(Regex("""(?<!\\)\|"""))
+        .map { it.trim().replace("\\|", "|") }
+
+internal fun parseMarkdownBlocks(content: String): List<MdBlock> {
     val blocks = mutableListOf<MdBlock>()
     val lines = content.lines()
     var i = 0
@@ -796,6 +899,18 @@ private fun parseMarkdownBlocks(content: String): List<MdBlock> {
         when {
             // Empty line — skip
             trimmed.isEmpty() -> i++
+
+            // Table: header row, delimiter row, then rows until a line that isn't one
+            isTableStart(lines, i) -> {
+                val header = splitTableRow(lines[i])
+                i += 2
+                val rows = mutableListOf<List<String>>()
+                while (i < lines.size && lines[i].trim().startsWith("|")) {
+                    rows.add(splitTableRow(lines[i]))
+                    i++
+                }
+                blocks.add(MdBlock.Table(header, rows))
+            }
 
             // Fenced code block
             trimmed.startsWith("```") -> {
@@ -860,6 +975,7 @@ private fun parseMarkdownBlocks(content: String): List<MdBlock> {
                     // If this line is a standalone image or nostr entity, break so it's handled as its own block
                     if (imageLineRegex.matches(l)) break
                     if (nostrEntityLineRegex.matches(l)) break
+                    if (isTableStart(lines, i)) break
                     paraLines.add(l)
                     i++
                 }
