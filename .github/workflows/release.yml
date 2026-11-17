@@ -6,7 +6,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch: # dry run: build and sign as 0.0.0, publish nothing
+  workflow_dispatch: # dry run: build and sign as 0.0.1, publish nothing
 
 permissions:
   contents: write
@@ -31,7 +31,7 @@ jobs:
         run: |
           echo "$WISP_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
           export WISP_KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
-          if [ "$GITHUB_REF_TYPE" = tag ]; then export WISP_VERSION="${GITHUB_REF_NAME#v}"; else export WISP_VERSION=0.0.0; fi
+          if [ "$GITHUB_REF_TYPE" = tag ]; then export WISP_VERSION="${GITHUB_REF_NAME#v}"; else export WISP_VERSION=0.0.1; fi
           ./gradlew --no-daemon :app:assembleRelease
           cp app/build/outputs/apk/release/app-release.apk "wisp-${WISP_VERSION}.apk"
 
