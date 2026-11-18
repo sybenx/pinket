@@ -669,7 +669,6 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
-        const val DEFAULT_SEARCH_RELAY = "wss://search.nostrarchives.com"
         /** Relays the search screen queries by default; results from both are merged. */
         val DEFAULT_SEARCH_RELAYS = listOf("wss://syb.lol", "wss://relay.ditto.pub")
         // NIP-50 relays often take several seconds; results stream in meanwhile.

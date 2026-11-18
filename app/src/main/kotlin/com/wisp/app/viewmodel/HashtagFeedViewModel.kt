@@ -147,7 +147,7 @@ class HashtagFeedViewModel(app: Application) : AndroidViewModel(app) {
             val noteReq = ClientMessage.req(currentNoteSub, noteFilter)
             activeSubIds.add(currentNoteSub)
 
-            relayPool.sendToRelayOrEphemeral(SearchViewModel.DEFAULT_SEARCH_RELAY, noteReq)
+            for (url in SearchViewModel.DEFAULT_SEARCH_RELAYS) relayPool.sendToRelayOrEphemeral(url, noteReq)
 
             // Wait for EOSE or timeout, then subscribe engagement
             withTimeoutOrNull(5_000) {
@@ -188,7 +188,8 @@ class HashtagFeedViewModel(app: Application) : AndroidViewModel(app) {
                 val subId = if (index == 0) engagePrefix else "$engagePrefix-$index"
                 activeSubIds.add(subId)
                 val filter = Filter(kinds = listOf(1, Nip22.KIND_COMMENT, 5, 6, 7, 1018, 9735), eTags = batch, limit = 500)
-                relayPool.sendToRelayOrEphemeral(SearchViewModel.DEFAULT_SEARCH_RELAY, ClientMessage.req(subId, filter))
+                val req = ClientMessage.req(subId, filter)
+                for (url in SearchViewModel.DEFAULT_SEARCH_RELAYS) relayPool.sendToRelayOrEphemeral(url, req)
             }
         }
     }

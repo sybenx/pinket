@@ -1346,11 +1346,11 @@ class FeedSubscriptionManager(
         if (hasRestoredFeedType) return
         hasRestoredFeedType = true
 
-        // Launches open on Follows unless another feed was saved. Trending is somewhere to
-        // visit, not to land, so a saved Trending opens Follows too.
+        // Launches open on Follows unless another feed was saved. Trending and For You are
+        // somewhere to visit, not to land, so a saved Trending or For You opens Follows too.
         val savedType = prefs.getString(KEY_LAST_FEED_TYPE, null)
             ?.let { runCatching { FeedType.valueOf(it) }.getOrNull() }
-            ?.takeIf { it != FeedType.TRENDING }
+            ?.takeIf { it != FeedType.TRENDING && it != FeedType.FOR_YOU }
             ?: FeedType.FOLLOWS
         if (savedType == _feedType.value) return
 
@@ -1447,11 +1447,10 @@ class FeedSubscriptionManager(
             }
         }
         try {
-            relayPool.sendToRelayOrEphemeral(
-                SearchViewModel.DEFAULT_SEARCH_RELAY,
-                ClientMessage.req(subId, filter)
-            )
-            subManager.awaitEoseWithTimeout(subId, timeoutMs = 15_000)
+            // Same relays as the search screen (syb.lol + relay.ditto.pub); wait for both or timeout
+            val req = ClientMessage.req(subId, filter)
+            for (url in SearchViewModel.DEFAULT_SEARCH_RELAYS) relayPool.sendToRelayOrEphemeral(url, req)
+            subManager.awaitEoseCount(subId, SearchViewModel.DEFAULT_SEARCH_RELAYS.size, timeoutMs = 15_000)
             delay(2_000)
         } finally {
             collector.cancel()
