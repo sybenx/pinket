@@ -380,8 +380,6 @@
     <string name="cd_lightning_address_qr_code">라이트닝 주소 QR 코드</string>
     <string name="cd_refresh_balance">잔액 새로고침</string>
     <string name="cd_transaction_history">거래 내역</string>
-    <string name="cd_spark">Spark</string>
-    <string name="cd_breez">Breez</string>
     <string name="cd_add_members">멤버 추가</string>
     <string name="cd_already_added">이미 추가됨</string>
     <string name="cd_close">닫기</string>
@@ -584,7 +582,6 @@
     <!-- Wallet -->
     <string name="wallet_nwc_connection_string">NWC 연결 문자열</string>
     <string name="wallet_connect">연결</string>
-    <string name="wallet_set_up_lightning">라이트닝 주소 설정</string>
     <string name="wallet_send">보내기</string>
     <string name="wallet_receive">받기</string>
     <string name="wallet_lightning_address_invoice">라이트닝 주소 또는 인보이스</string>
@@ -611,7 +608,6 @@
     <string name="wallet_received">수령</string>
     <string name="wallet_sent">전송</string>
     <string name="wallet_fee">수수료: %,d 사트</string>
-    <string name="wallet_spark_sdk">SDK v%s</string>
     <string name="wallet_not_supported">지갑에서 지원하지 않음</string>
     <string name="wallet_creating_invoice">인보이스 생성 중…</string>
 

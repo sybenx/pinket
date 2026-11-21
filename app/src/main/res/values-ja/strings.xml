@@ -380,8 +380,6 @@
     <string name="cd_lightning_address_qr_code">LightningアドレスQRコード</string>
     <string name="cd_refresh_balance">残高を更新</string>
     <string name="cd_transaction_history">取引履歴</string>
-    <string name="cd_spark">Spark</string>
-    <string name="cd_breez">Breez</string>
     <string name="cd_add_members">メンバーを追加</string>
     <string name="cd_already_added">既に追加済み</string>
     <string name="cd_close">閉じる</string>
@@ -584,7 +582,6 @@
     <!-- Wallet -->
     <string name="wallet_nwc_connection_string">NWC接続文字列</string>
     <string name="wallet_connect">接続</string>
-    <string name="wallet_set_up_lightning">Lightningアドレスを設定</string>
     <string name="wallet_send">送る</string>
     <string name="wallet_receive">受け取る</string>
     <string name="wallet_lightning_address_invoice">Lightningアドレスまたはインボイス</string>
@@ -611,7 +608,6 @@
     <string name="wallet_received">受け取り</string>
     <string name="wallet_sent">送り</string>
     <string name="wallet_fee">手数料: %,d サット</string>
-    <string name="wallet_spark_sdk">SDK v%s</string>
     <string name="wallet_not_supported">お使いのウォレットではサポートされていません</string>
     <string name="wallet_creating_invoice">インボイス作成中…</string>
 

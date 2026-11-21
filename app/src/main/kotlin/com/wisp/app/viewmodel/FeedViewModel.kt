@@ -44,8 +44,6 @@ import com.wisp.app.repo.NotificationRepository
 import com.wisp.app.repo.PinRepository
 import com.wisp.app.repo.ProfileRepository
 import com.wisp.app.repo.NwcRepository
-import com.wisp.app.repo.SparkRepository
-import com.wisp.app.repo.WalletMode
 import com.wisp.app.repo.WalletModeRepository
 import com.wisp.app.repo.WalletProvider
 import com.wisp.app.repo.CustomEmojiRepository
@@ -301,14 +299,10 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
 
     val interfacePrefs = InterfacePreferences(app)
     val nwcRepo = NwcRepository(app, relayPool, pubkeyHex)
-    val sparkRepo = SparkRepository(app, pubkeyHex)
     val walletModeRepo = WalletModeRepository(app, pubkeyHex)
 
     val activeWalletProvider: WalletProvider
-        get() = when (walletModeRepo.getMode()) {
-            WalletMode.SPARK -> sparkRepo
-            else -> nwcRepo
-        }
+        get() = nwcRepo
 
     val zapSender = ZapSender(keyRepo, { activeWalletProvider }, relayPool, relayListRepo, HttpClientFactory.createRelayClient(), interfacePrefs)
     val powManager = PowManager(powPrefs::getNoteDifficulty, { eventRepo.notePublisher })
@@ -356,7 +350,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         listRepo, bookmarkRepo, bookmarkSetRepo, relaySetRepo, pinRepo, blossomRepo, deletedEventsRepo, interestRepo, customEmojiRepo,
         relayListRepo, relayScoreBoard, relayHintStore, healthTracker, keyRepo,
         extendedNetworkRepo, metadataFetcher, profileRepo, relayInfoRepo, nip05Repo,
-        nwcRepo, sparkRepo, walletModeRepo, dmRepo, liveStreamRepo, zapPrefs, lifecycleManager, eventRouter, feedSub,
+        nwcRepo, walletModeRepo, dmRepo, liveStreamRepo, zapPrefs, lifecycleManager, eventRouter, feedSub,
         accountScope, processingDispatcher,
         getUserPubkey = { getUserPubkey() },
         registerAuthSigner = { registerAuthSigner() },
@@ -833,7 +827,6 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         stopPublications()
         super.onCleared()
         nwcRepo.disconnect()
-        sparkRepo.disconnect()
         relayPool.disconnectAll()
         notifRepo.shutdown()
         eventRepo.shutdown()

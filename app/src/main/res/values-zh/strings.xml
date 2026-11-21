@@ -380,8 +380,6 @@
     <string name="cd_lightning_address_qr_code">闪电地址二维码</string>
     <string name="cd_refresh_balance">刷新余额</string>
     <string name="cd_transaction_history">交易历史</string>
-    <string name="cd_spark">Spark</string>
-    <string name="cd_breez">Breez</string>
     <string name="cd_add_members">添加成员</string>
     <string name="cd_already_added">已添加</string>
     <string name="cd_close">关闭</string>
@@ -584,7 +582,6 @@
     <!-- Wallet -->
     <string name="wallet_nwc_connection_string">NWC连接字符串</string>
     <string name="wallet_connect">连接</string>
-    <string name="wallet_set_up_lightning">设置Lightning地址</string>
     <string name="wallet_send">发送</string>
     <string name="wallet_receive">接收</string>
     <string name="wallet_lightning_address_invoice">Lightning地址或发票</string>
@@ -611,7 +608,6 @@
     <string name="wallet_received">已接收</string>
     <string name="wallet_sent">已发送</string>
     <string name="wallet_fee">费用: %,d 聪</string>
-    <string name="wallet_spark_sdk">SDK v%s</string>
     <string name="wallet_not_supported">您的钱包不支持</string>
     <string name="wallet_creating_invoice">创建发票中…</string>
 

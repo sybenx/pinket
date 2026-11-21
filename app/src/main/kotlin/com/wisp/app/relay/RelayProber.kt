@@ -26,7 +26,6 @@ enum class OnboardingPhase(val display: String) {
     DISCOVERING("Discovering relays..."),
     SELECTING("Selecting the perfect relays..."),
     TESTING("Testing relays..."),
-    WALLET_SETUP("Setting up your wallet..."),
     BROADCASTING("Broadcasting relay list..."),
     DONE("Done!"),
     FAILED("Using default relays")

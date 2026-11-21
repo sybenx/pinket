@@ -213,7 +213,6 @@ fun WispNavHost(
             override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
                 return WalletViewModel(
                     feedViewModel.nwcRepo,
-                    feedViewModel.sparkRepo,
                     feedViewModel.walletModeRepo,
                     feedViewModel.eventRepo,
                     feedViewModel.relayPool,
@@ -909,7 +908,6 @@ fun WispNavHost(
                 onSwitchAccount = onSwitchAccount,
                 onAddAccount = onAddAccount,
                 onMoveAccount = { pubkeyHex, offset -> authViewModel.moveAccount(pubkeyHex, offset) },
-                hasEmbeddedWallet = walletViewModel.walletMode.collectAsState().value == com.wisp.app.repo.WalletMode.SPARK,
                 // Mini-wallet widget state (wisp-ios #474). The balance is
                 // null whenever it's unknown so the stripe shows "…" rather
                 // than a bogus "0".
@@ -923,7 +921,7 @@ fun WispNavHost(
                             groupListViewModel.reset()
                             walletViewModel.suspendForAccountSwitch()
                             walletViewModel.nwcRepo.clearConnection()
-                            walletViewModel.sparkRepo.clearMnemonic()
+                            walletViewModel.walletModeRepo.clearLegacySparkData()
                             walletViewModel.walletModeRepo.setMode(com.wisp.app.repo.WalletMode.NONE)
                         },
                         swapKey = { hasRemaining = authViewModel.logOut() },
@@ -3069,7 +3067,7 @@ fun WispNavHost(
             val scope = rememberCoroutineScope()
             BackHandler(onBack = onBack)
             LaunchedEffect(Unit) {
-                onboardingViewModel.startDiscovery(feedViewModel.sparkRepo, feedViewModel.walletModeRepo)
+                onboardingViewModel.startDiscovery(feedViewModel.walletModeRepo)
             }
             OnboardingScreen(
                 viewModel = onboardingViewModel,
@@ -3077,8 +3075,6 @@ fun WispNavHost(
                     scope.launch {
                         if (onboardingViewModel.finishProfile(
                                 feedViewModel.relayPool,
-                                sparkRepo = feedViewModel.sparkRepo,
-                                walletModeRepo = feedViewModel.walletModeRepo,
                                 signer = activeSigner
                             )) {
                             navController.navigate(Routes.ONBOARDING_SUGGESTIONS) {

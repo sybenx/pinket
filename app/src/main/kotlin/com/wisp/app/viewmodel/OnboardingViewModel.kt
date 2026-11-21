@@ -25,8 +25,6 @@ import com.wisp.app.nostr.Nip78
 import com.wisp.app.repo.BlossomRepository
 import com.wisp.app.repo.ContactRepository
 import com.wisp.app.repo.KeyRepository
-import com.wisp.app.repo.SparkRepository
-import com.wisp.app.repo.WalletMode
 import com.wisp.app.repo.WalletModeRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
@@ -102,29 +100,6 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         )
         private val ACTIVE_RELAYS = listOf("wss://premium.primal.net", "wss://nostr.wine", "wss://relay.wisp.talk", "wss://pyramid.fiatjaf.com")
         private const val NEWS_RELAY = "wss://news.utxo.one"
-
-        private val COLORS = listOf(
-            "blue", "red", "green", "gold", "silver", "amber", "coral",
-            "violet", "jade", "ruby", "teal", "cyan", "crimson", "ivory",
-            "bronze", "copper", "indigo", "scarlet", "azure", "pearl",
-            "onyx", "sage", "rose", "slate", "plum", "lime", "rust", "mint"
-        )
-        private val ANIMALS = listOf(
-            "panda", "wolf", "fox", "falcon", "otter", "raven", "tiger",
-            "eagle", "dolphin", "hawk", "lynx", "bear", "owl", "cobra",
-            "bison", "crane", "gecko", "heron", "koala", "lemur",
-            "moose", "newt", "ocelot", "puma", "quail", "robin",
-            "shark", "swift", "viper", "wren", "yak", "zebra",
-            "badger", "cougar", "drake", "finch", "gopher", "hound"
-        )
-
-        private fun generateUsername(): String {
-            val random = java.security.SecureRandom()
-            val color = COLORS[random.nextInt(COLORS.size)]
-            val animal = ANIMALS[random.nextInt(ANIMALS.size)]
-            val number = random.nextInt(90) + 10 // 10-99
-            return "$color$animal$number"
-        }
     }
 
     fun updateName(value: String) { _name.value = value }
@@ -148,7 +123,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun startDiscovery(sparkRepo: SparkRepository? = null, walletModeRepo: WalletModeRepository? = null) {
+    fun startDiscovery(walletModeRepo: WalletModeRepository? = null) {
         // Reset state from any previous onboarding run (ViewModel survives logout)
         suggestionsJob?.cancel()
         suggestionsJob = null
@@ -160,26 +135,13 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         _error.value = null
 
         // Use real keypair if available, otherwise generate a throwaway for probing
-        val realKeypair = keyRepo.getKeypair()
-        val keypair = realKeypair ?: Keys.generate()
+        val keypair = keyRepo.getKeypair() ?: Keys.generate()
         val pubHex = keyRepo.getPubkeyHex() ?: keypair.pubkey.toHex()
         keyRepo.reloadPrefs(pubHex)
         blossomRepo.reload(pubHex)
 
-        // Reload wallet repos so mnemonic + mode are stored under the correct pubkey prefs
+        // Reload the wallet mode repo so it reads this pubkey's prefs
         walletModeRepo?.reload(pubHex)
-
-        // Derive the default Spark wallet deterministically from the user's nsec
-        // so it is recoverable on any device by signing in with the same key.
-        // Skip if no real keypair yet (we're only probing relays with a throwaway).
-        if (sparkRepo != null && realKeypair != null) {
-            sparkRepo.reload(pubHex)
-            try {
-                sparkRepo.generateDefaultFromPrivkey(realKeypair.privkey)
-            } catch (e: Exception) {
-                Log.w(TAG, "Default wallet derivation failed: ${e.message}")
-            }
-        }
 
         viewModelScope.launch {
             val relays = RelayProber.discoverAndSelect(
@@ -189,28 +151,15 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
             )
             _probingUrl.value = null
             _discoveredRelays.value = relays
-
-            // Start Spark connection after relay discovery to avoid network contention
-            if (sparkRepo != null) {
-                launch {
-                    try {
-                        sparkRepo.connect()
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Wallet pre-connect failed: ${e.message}")
-                    }
-                }
-            }
         }
     }
 
     /**
-     * Finish profile step: save relays, init relay pool, set up wallet, publish kind 0.
+     * Finish profile step: save relays, init relay pool, publish kind 0.
      * Returns true if successful.
      */
     suspend fun finishProfile(
         relayPool: RelayPool,
-        sparkRepo: SparkRepository? = null,
-        walletModeRepo: WalletModeRepository? = null,
         signer: NostrSigner? = null
     ): Boolean {
         val s = signer ?: keyRepo.getKeypair()?.let { LocalSigner(it.privkey, it.pubkey) } ?: return false
@@ -230,34 +179,6 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
             keyRepo.saveRelays(relays)
             relayPool.updateRelays(relays)
 
-            // Wait for Spark wallet and register lightning address
-            var lightningAddress: String? = null
-            if (sparkRepo != null) {
-                _phase.value = OnboardingPhase.WALLET_SETUP
-                try {
-                    val connected = withTimeoutOrNull(15_000) {
-                        sparkRepo.isConnected.first { it }
-                    }
-                    if (connected != null) {
-                        for (attempt in 1..3) {
-                            val username = generateUsername()
-                            val available = sparkRepo.checkLightningAddressAvailable(username)
-                                .getOrNull() ?: false
-                            if (available) {
-                                val addr = sparkRepo.registerLightningAddress(username).getOrNull()
-                                if (addr != null) {
-                                    lightningAddress = addr
-                                    break
-                                }
-                            }
-                        }
-                        walletModeRepo?.setMode(WalletMode.SPARK)
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Wallet setup failed: ${e.message}")
-                }
-            }
-
             _phase.value = OnboardingPhase.BROADCASTING
 
             val relayTags = Nip65.buildRelayTags(relays)
@@ -272,7 +193,6 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                 if (_name.value.isNotBlank()) put("name", JsonPrimitive(_name.value))
                 if (_about.value.isNotBlank()) put("about", JsonPrimitive(_about.value))
                 if (_picture.value.isNotBlank()) put("picture", JsonPrimitive(_picture.value))
-                if (lightningAddress != null) put("lud16", JsonPrimitive(lightningAddress))
             }.toString()
 
             if (content != "{}") {
@@ -281,26 +201,6 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                 relayPool.sendToWriteRelays(profileMsg)
                 for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
                     relayPool.sendToRelayOrEphemeral(url, profileMsg)
-                }
-            }
-
-            // NIP-78 relay backup is only useful for non-default wallets — the
-            // default wallet's mnemonic is derived from the nsec, and Breez
-            // remembers its lightning address registration server-side, so
-            // there's nothing extra to persist on relays.
-            val privkey = keyRepo.getKeypair()?.privkey
-            if (sparkRepo != null && privkey != null && !sparkRepo.isDefaultWallet(privkey)) {
-                val mnemonic = sparkRepo.getMnemonic()
-                if (mnemonic != null) {
-                    viewModelScope.launch {
-                        try {
-                            val backupEvent = Nip78.createBackupEvent(s, mnemonic)
-                            val backupMsg = ClientMessage.event(backupEvent)
-                            relayPool.sendToWriteRelays(backupMsg)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Mnemonic backup failed: ${e.message}")
-                        }
-                    }
                 }
             }
 

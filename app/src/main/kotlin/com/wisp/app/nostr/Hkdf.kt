@@ -4,8 +4,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * HKDF (RFC 5869) and HMAC-SHA256 primitives shared by NIP-44 encryption
- * and deterministic key derivation (Spark wallet entropy from nsec).
+ * HKDF (RFC 5869) and HMAC-SHA256 primitives used by NIP-44 encryption.
  */
 object Hkdf {
     private val hmacLocal = ThreadLocal.withInitial { Mac.getInstance("HmacSHA256") }

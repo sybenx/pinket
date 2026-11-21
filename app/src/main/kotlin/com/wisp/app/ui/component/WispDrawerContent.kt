@@ -120,7 +120,6 @@ fun WispDrawerContent(
     onRelaySettings: () -> Unit,
     onInterfaceSettings: () -> Unit = {},
     onLogout: () -> Unit,
-    hasEmbeddedWallet: Boolean = false,
     userStatus: String? = null,
     onUpdateStatus: ((String) -> Unit)? = null,
     onScanResult: (String) -> Unit = {},
@@ -546,23 +545,6 @@ fun WispDrawerContent(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
-                        }
-                        if (canSign && hasEmbeddedWallet) {
-                            Spacer(Modifier.height(14.dp))
-                            Row(verticalAlignment = Alignment.Top) {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_wallet_outlined),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp),
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                                Spacer(Modifier.width(10.dp))
-                                Text(
-                                    "Back up your wallet recovery phrase. Without it, your funds cannot be recovered.",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
                         }
                     }
                 },

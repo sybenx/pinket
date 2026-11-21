@@ -427,7 +427,7 @@ class NwcRepository(private val context: Context, private val relayPool: RelayPo
         // A timeout here does NOT mean the payment failed; the wallet may still complete it.
         val result = sendRequest(Nip47.NwcRequest.PayInvoice(bolt11), timeoutMs = 0)
         // NIP-47 pay_invoice only yields a preimage once the payment settled,
-        // so a response here is genuinely COMPLETED — unlike Spark, which can
+        // so a response here is genuinely COMPLETED — unlike a backend that can
         // return an in-flight payment.
         return result.map {
             WalletPayment((it as Nip47.NwcResponse.PayInvoiceResult).preimage, PaymentSettlement.COMPLETED)

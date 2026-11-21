@@ -380,8 +380,6 @@
     <string name="cd_lightning_address_qr_code">Lightning Adres QR-code</string>
     <string name="cd_refresh_balance">Saldo Vernieuwen</string>
     <string name="cd_transaction_history">Transactiegeschiedenis</string>
-    <string name="cd_spark">Spark</string>
-    <string name="cd_breez">Breez</string>
     <string name="cd_add_members">Leden Toevoegen</string>
     <string name="cd_already_added">Al Toegevoegd</string>
     <string name="cd_close">Sluiten</string>
@@ -584,7 +582,6 @@
     <!-- Wallet -->
     <string name="wallet_nwc_connection_string">NWC Verbindingsreeks</string>
     <string name="wallet_connect">Verbinden</string>
-    <string name="wallet_set_up_lightning">Lightning Adres Instellen</string>
     <string name="wallet_send">Verzenden</string>
     <string name="wallet_receive">Ontvangen</string>
     <string name="wallet_lightning_address_invoice">Lightning adres of factuur</string>
@@ -611,7 +608,6 @@
     <string name="wallet_received">Ontvangen</string>
     <string name="wallet_sent">Verzonden</string>
     <string name="wallet_fee">kosten: %,d sats</string>
-    <string name="wallet_spark_sdk">SDK v%s</string>
     <string name="wallet_not_supported">Niet ondersteund door je portemonnee</string>
     <string name="wallet_creating_invoice">Factuur maken…</string>
 

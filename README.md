@@ -65,13 +65,11 @@ The composer completes after the post is saved; relay results cannot close anoth
 
 ### Lightning & Zaps
 
-A built-in non-custodial Lightning wallet powered by [Breez SDK (Spark)](https://github.com/breez/breez-sdk-spark), plus NWC as an alternative:
+Pay zaps through any external wallet over Nostr Wallet Connect. Pinket has no built-in wallet:
 
-- **Embedded Spark wallet** — self-custodial Lightning node that runs on-device
-- **12-word seed backup** — standard BIP-39 mnemonic recovery
-- **Encrypted relay backup** — wallet credentials encrypted to your own pubkey (NIP-44) and published as a NIP-78 app-data event (kind 30078) so you can restore from any session; format-compatible with other Spark wallets
-- **NWC (NIP-47)** — connect any `nostr+walletconnect://` compatible wallet as an alternative
-- **Lightning address** — configure a reusable LN address for receiving
+- **NWC (NIP-47)**: connect any `nostr+walletconnect://` compatible wallet
+- **Encrypted connection backup**: the NWC connection string encrypted to your own pubkey (NIP-44) and published as a NIP-78 app-data event (kind 30078) so you can restore it on another device
+- **Lightning address**: shown when your NWC connection string carries one
 - **Transaction history** — paginated, with counterparty resolution from zap receipts
 - **Zaps** — send (NIP-57), display zap receipts on the feed, and vote in **zap polls** (NIP-69)
 - **QR scanning** — scan or import to pay invoices
@@ -162,7 +160,7 @@ Wisp follows an MVVM architecture with clear layer separation:
 │  GroupRoomVM, LiveStreamVM, SocialGraphVM, ...        │
 ├──────────────────────────────────────────────────────┤
 │                   Repository Layer                    │
-│   EventRepo, ContactRepo, DmRepo, NwcRepo, Spark,     │
+│   EventRepo, ContactRepo, DmRepo, NwcRepo,            │
 │   RelayListRepo, BlossomRepo, MuteRepo, GroupRepo,    │
 │   MetadataFetcher, SocialGraphDb, SpamAuthorCache...  │
 ├──────────────────────────────────────────────────────┤
@@ -387,7 +385,7 @@ Contributions are welcome. Wisp is open source and community help makes it bette
 | Cryptography | secp256k1-kmp (Schnorr / ECDH), Bouncy Castle (XChaCha20), Android Security Crypto (AES-GCM), javax.crypto (HKDF/HMAC) |
 | ML | LightGBM (on-device nspam classifier) with MurmurHash3 feature hashing |
 | Navigation | Jetpack Navigation Compose |
-| Lightning | Breez SDK Spark + NWC (NIP-47) |
+| Lightning | NWC (NIP-47) |
 | Media | Media3 / ExoPlayer |
 | QR Codes | ZXing |
 | Build | Gradle 8.x / AGP 8.x |

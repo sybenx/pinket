@@ -172,7 +172,6 @@ fun FeedScreen(
     onAddAccount: () -> Unit = {},
     onMoveAccount: (pubkeyHex: String, offset: Int) -> Unit = { _, _ -> },
     onLogout: () -> Unit = {},
-    hasEmbeddedWallet: Boolean = false,
     onMediaServers: () -> Unit = {},
     onWallet: () -> Unit = {},
     onLists: () -> Unit = {},
@@ -743,7 +742,6 @@ fun FeedScreen(
                     scope.launch { drawerState.close() }
                     onLogout()
                 },
-                hasEmbeddedWallet = hasEmbeddedWallet,
                 walletConfigured = walletConfigured,
                 walletBalanceMsats = walletBalanceMsats,
                 isWatchOnly = isWatchOnly,

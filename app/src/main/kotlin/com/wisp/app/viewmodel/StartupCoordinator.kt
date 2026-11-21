@@ -32,7 +32,6 @@ import com.wisp.app.repo.MuteRepository
 import com.wisp.app.repo.Nip05Repository
 import com.wisp.app.repo.NotificationRepository
 import com.wisp.app.repo.NwcRepository
-import com.wisp.app.repo.SparkRepository
 import com.wisp.app.repo.WalletModeRepository
 import com.wisp.app.repo.PinRepository
 import com.wisp.app.repo.ProfileRepository
@@ -91,7 +90,6 @@ class StartupCoordinator(
     private val relayInfoRepo: RelayInfoRepository,
     private val nip05Repo: Nip05Repository,
     private val nwcRepo: NwcRepository,
-    private val sparkRepo: SparkRepository,
     private val walletModeRepo: WalletModeRepository,
     private val dmRepo: DmRepository,
     private val liveStreamRepo: LiveStreamRepository?,
@@ -190,7 +188,6 @@ class StartupCoordinator(
         deletedEventsRepo.reload(newPubkey)
         interestRepo.reload(newPubkey)
         nwcRepo.reload(newPubkey)
-        sparkRepo.reload(newPubkey)
         walletModeRepo.reload(newPubkey)
         relayScoreBoard.reload(newPubkey)
         healthTracker.reload(newPubkey)

@@ -1,5 +1,3 @@
-import java.util.Properties
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -30,15 +28,6 @@ android {
         ndk {
             abiFilters += "arm64-v8a"
         }
-
-        val localProps = rootProject.file("local.properties")
-        val breezApiKey = if (localProps.exists()) {
-            val props = Properties()
-            localProps.inputStream().use { props.load(it) }
-            props.getProperty("breez.api.key", "")
-        } else ""
-        buildConfigField("String", "BREEZ_API_KEY", "\"$breezApiKey\"")
-        buildConfigField("String", "BREEZ_SDK_VERSION", "\"${libs.versions.breez.sdk.spark.get()}\"")
     }
 
     // Release signing from env (CI secrets, or ~/.android/wisp locally); unsigned without it
@@ -191,7 +180,6 @@ dependencies {
     implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.objectbox.android)
     implementation(libs.objectbox.kotlin)
-    implementation(libs.breez.sdk.spark)
     implementation(libs.mlkit.barcode)
     implementation(libs.camerax.core)
     implementation(libs.camerax.camera2)

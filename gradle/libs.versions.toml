@@ -23,7 +23,6 @@ mlkit-language-id = "17.0.6"
 mlkit-barcode = "17.3.0"
 camerax = "1.4.1"
 objectbox = "5.2.0"
-breez-sdk-spark = "0.23.1"
 activity-compose = "1.9.3"
 navigation-compose = "2.8.5"
 lifecycle = "2.8.7"
@@ -89,7 +88,6 @@ camerax-mlkit = { group = "androidx.camera", name = "camera-mlkit-vision", versi
 kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "coroutines" }
 objectbox-android = { group = "io.objectbox", name = "objectbox-android", version.ref = "objectbox" }
 objectbox-kotlin = { group = "io.objectbox", name = "objectbox-kotlin", version.ref = "objectbox" }
-breez-sdk-spark = { group = "breez_sdk_spark", name = "bindings-android", version.ref = "breez-sdk-spark" }
 androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "credentials" }
 androidx-credentials-play-services-auth = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "credentials" }
 googleid = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "googleid" }

@@ -30,7 +30,6 @@ class AccountPublicationIntegrationTest {
     private var activeKey: Keys.Keypair? = null
     private lateinit var keys: MockedConstruction<KeyRepository>
     private lateinit var nwc: MockedConstruction<NwcRepository>
-    private lateinit var wallet: MockedConstruction<SparkRepository>
     private lateinit var feed: FeedViewModel
     private lateinit var editor: ComposeViewModel
     private lateinit var app: Application
@@ -43,8 +42,6 @@ class AccountPublicationIntegrationTest {
             Mockito.`when`(mock.getPubkeyHex()).thenAnswer { activeKey?.pubkey?.toHex() }
             Mockito.`when`(mock.getKeypair()).thenAnswer { activeKey }
         }
-        // Spark's unrelated encrypted wallet requires AndroidKeyStore on a physical device.
-        wallet = Mockito.mockConstruction(SparkRepository::class.java)
         nwc = Mockito.mockConstruction(NwcRepository::class.java)
         InterfacePreferences(app).setPostUndoTimerEnabled(false)
         feed = FeedViewModel(app)
@@ -57,7 +54,6 @@ class AccountPublicationIntegrationTest {
     @After fun cleanup() {
         compose.runOnIdle { owners.clear() }
         nwc.close()
-        wallet.close()
         keys.close()
     }
 

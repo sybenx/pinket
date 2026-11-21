@@ -380,8 +380,6 @@
     <string name="cd_lightning_address_qr_code">Código QR de Dirección Lightning</string>
     <string name="cd_refresh_balance">Actualizar saldo</string>
     <string name="cd_transaction_history">Historial de Transacciones</string>
-    <string name="cd_spark">Spark</string>
-    <string name="cd_breez">Breez</string>
     <string name="cd_add_members">Añadir Miembros</string>
     <string name="cd_already_added">Ya añadido</string>
     <string name="cd_close">Cerrar</string>
@@ -584,7 +582,6 @@
     <!-- Wallet -->
     <string name="wallet_nwc_connection_string">Cadena de Conexión NWC</string>
     <string name="wallet_connect">Conectar</string>
-    <string name="wallet_set_up_lightning">Configurar tu Dirección Lightning</string>
     <string name="wallet_send">Enviar</string>
     <string name="wallet_receive">Recibir</string>
     <string name="wallet_lightning_address_invoice">Dirección Lightning o factura</string>
@@ -611,7 +608,6 @@
     <string name="wallet_received">Recibido</string>
     <string name="wallet_sent">Enviado</string>
     <string name="wallet_fee">comisión: %,d sats</string>
-    <string name="wallet_spark_sdk">SDK v%s</string>
     <string name="wallet_not_supported">No soportado por tu billetera</string>
     <string name="wallet_creating_invoice">Creando factura…</string>
 

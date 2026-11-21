@@ -56,13 +56,6 @@
 -dontwarn io.objectbox.**
 -keep class com.wisp.app.db.** { *; }
 
-# Breez SDK Spark (UniFFI bindings)
--keep class breez_sdk_spark.** { *; }
--dontwarn breez_sdk_spark.**
-# JNA (used by Breez SDK UniFFI)
--keep class com.sun.jna.** { *; }
--dontwarn com.sun.jna.**
-
 # Credential Manager + Google Identity
 -keep class androidx.credentials.** { *; }
 -dontwarn androidx.credentials.**

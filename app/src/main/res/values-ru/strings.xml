@@ -363,8 +363,6 @@
     <string name="cd_lightning_address_qr_code">QR-код Lightning-адреса</string>
     <string name="cd_refresh_balance">Обновить баланс</string>
     <string name="cd_transaction_history">История транзакций</string>
-    <string name="cd_spark">Spark</string>
-    <string name="cd_breez">Breez</string>
     <string name="cd_add_members">Добавить участников</string>
     <string name="cd_already_added">Уже добавлено</string>
     <string name="cd_close">Закрыть</string>
@@ -545,7 +543,6 @@
     <!-- Wallet -->
     <string name="wallet_nwc_connection_string">Строка Подключения NWC</string>
     <string name="wallet_connect">Подключить</string>
-    <string name="wallet_set_up_lightning">Настроить Адрес Lightning</string>
     <string name="wallet_send">Отправить</string>
     <string name="wallet_receive">Получить</string>
     <string name="wallet_lightning_address_invoice">Адрес Lightning или счёт</string>
@@ -572,7 +569,6 @@
     <string name="wallet_received">Получено</string>
     <string name="wallet_sent">Отправлено</string>
     <string name="wallet_fee">комиссия: %,d сат</string>
-    <string name="wallet_spark_sdk">SDK v%s</string>
     <string name="wallet_not_supported">Не поддерживается вашим кошельком</string>
     <string name="wallet_creating_invoice">Создание счёта…</string>
 

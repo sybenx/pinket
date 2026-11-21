@@ -17,18 +17,14 @@ import com.wisp.app.repo.EventRepository
 import com.wisp.app.repo.KeyRepository
 import com.wisp.app.repo.BalanceUnit
 import com.wisp.app.repo.NwcRepository
-import com.wisp.app.repo.SparkRepository
 import com.wisp.app.repo.WalletMode
 import com.wisp.app.repo.WalletModeRepository
 import com.wisp.app.repo.WalletProvider
 import android.util.Log
 import com.wisp.app.repo.WalletTransaction
-import com.wisp.app.repo.WithdrawOnchainQuote
 import com.wisp.app.repo.ZapSender
 import com.wisp.app.relay.RelayPool
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,8 +35,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.yield
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
 
 sealed class WalletState {
     object NotConnected : WalletState()
@@ -49,40 +43,6 @@ sealed class WalletState {
     data class Error(val message: String) : WalletState()
 }
 
-sealed class BackupStatus {
-    object None : BackupStatus()
-    object InProgress : BackupStatus()
-    object Success : BackupStatus()
-    data class Error(val message: String) : BackupStatus()
-}
-
-data class BackupEntry(val mnemonic: String, val walletId: String?, val createdAt: Long)
-
-sealed class RestoreFromRelayStatus {
-    object Idle : RestoreFromRelayStatus()
-    object Searching : RestoreFromRelayStatus()
-    data class Found(val mnemonic: String, val walletId: String?, val createdAt: Long) : RestoreFromRelayStatus()
-    data class MultipleFound(val backups: List<BackupEntry>) : RestoreFromRelayStatus()
-    object NotFound : RestoreFromRelayStatus()
-    data class Error(val message: String) : RestoreFromRelayStatus()
-}
-
-data class RelayBackupInfo(val relayUrl: String, val hasBackup: Boolean)
-
-sealed class DeleteBackupStatus {
-    object Idle : DeleteBackupStatus()
-    object InProgress : DeleteBackupStatus()
-    object Success : DeleteBackupStatus()
-    data class Error(val message: String) : DeleteBackupStatus()
-}
-
-sealed class AutoCheckState {
-    object Idle : AutoCheckState()
-    object Checking : AutoCheckState()
-    data class Found(val mnemonic: String, val walletId: String?, val createdAt: Long) : AutoCheckState()
-    data class MultipleFound(val backups: List<BackupEntry>) : AutoCheckState()
-    object NotFound : AutoCheckState()
-}
 
 sealed class NwcRestoreState {
     object Idle : NwcRestoreState()
@@ -91,20 +51,10 @@ sealed class NwcRestoreState {
     object NotFound : NwcRestoreState()
 }
 
-sealed class FeeState {
-    object Idle : FeeState()
-    object Loading : FeeState()
-    data class Estimated(val feeSats: Long) : FeeState()
-    object Unavailable : FeeState()
-}
-
 sealed class WalletPage {
     object Home : WalletPage()
     object ModeSelection : WalletPage()
     object NwcSetup : WalletPage()
-    object SparkSetup : WalletPage()
-    object SparkRestoreSeed : WalletPage()
-    data class SparkBackup(val mnemonic: String) : WalletPage()
     data class NwcExport(val connectionString: String) : WalletPage()
     object SendInput : WalletPage()
     object ScanQR : WalletPage()
@@ -122,16 +72,11 @@ sealed class WalletPage {
     data class ReceiveSuccess(val amountSats: Long) : WalletPage()
     object Transactions : WalletPage()
     object Settings : WalletPage()
-    object LightningAddressSetup : WalletPage()
-    object LightningAddressQR : WalletPage()
     object DeleteWalletConfirm : WalletPage()
-    object BackupToRelay : WalletPage()
-    object RestoreFromRelay : WalletPage()
 }
 
 class WalletViewModel(
     val nwcRepo: NwcRepository,
-    val sparkRepo: SparkRepository,
     val walletModeRepo: WalletModeRepository,
     val eventRepo: EventRepository,
     val relayPool: RelayPool,
@@ -140,7 +85,7 @@ class WalletViewModel(
     private val accountScope = AccountSessionScope(viewModelScope)
     private var accountSuspended = false
 
-    private val _walletMode = MutableStateFlow(walletModeRepo.getMode())
+    private val _walletMode = MutableStateFlow(walletModeRepo.getMode(nwcRepo.hasConnection()))
     val walletMode: StateFlow<WalletMode> = _walletMode
 
     private val _balanceUnit = MutableStateFlow(walletModeRepo.getBalanceUnit())
@@ -152,10 +97,7 @@ class WalletViewModel(
     }
 
     private val activeProvider: WalletProvider
-        get() = when (_walletMode.value) {
-            WalletMode.SPARK -> sparkRepo
-            else -> nwcRepo
-        }
+        get() = nwcRepo
 
     private val _walletState = MutableStateFlow<WalletState>(
         if (activeProvider.hasConnection()) WalletState.Connecting else WalletState.NotConnected
@@ -202,186 +144,57 @@ class WalletViewModel(
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
 
-    // Fee estimation
-    private val _feeState = MutableStateFlow<FeeState>(FeeState.Idle)
-    val feeState: StateFlow<FeeState> = _feeState
-    private var _preparedPaymentData: Any? = null
-
     private val _isLoadingMore = MutableStateFlow(false)
     val isLoadingMore: StateFlow<Boolean> = _isLoadingMore
 
     private val _hasMoreTransactions = MutableStateFlow(true)
     val hasMoreTransactions: StateFlow<Boolean> = _hasMoreTransactions
 
-    // Spark setup
-    private val _restoreMnemonic = MutableStateFlow("")
-    val restoreMnemonic: StateFlow<String> = _restoreMnemonic
-
     // Lightning address
     private val _lightningAddress = MutableStateFlow<String?>(null)
     val lightningAddress: StateFlow<String?> = _lightningAddress
-
-    private val _lightningAddressLoading = MutableStateFlow(false)
-    val lightningAddressLoading: StateFlow<Boolean> = _lightningAddressLoading
-
-    private val _lightningAddressError = MutableStateFlow<String?>(null)
-    val lightningAddressError: StateFlow<String?> = _lightningAddressError
 
     // NWC node info (alias + supported methods) — fetched once post-connect.
     val nwcNodeAlias: StateFlow<String?> = nwcRepo.nodeAlias
     val nwcSupportedMethods: StateFlow<List<String>> = nwcRepo.supportedMethods
 
-    // Spark identity pubkey — populated from the SDK's GetInfoResponse.
-    val sparkIdentityPubkey: StateFlow<String?> = sparkRepo.identityPubkey
-
     // NWC connection metadata for the Wallet Info expandable in settings.
     val nwcConnectionInfo: StateFlow<NwcRepository.ConnectionInfo?> = nwcRepo.connectionInfo
-
-    // Delete wallet confirmation
-    private val _deleteConfirmText = MutableStateFlow("")
-    val deleteConfirmText: StateFlow<String> = _deleteConfirmText
-
-    // Lightning address availability check
-    private val _addressAvailable = MutableStateFlow<Boolean?>(null)
-    val addressAvailable: StateFlow<Boolean?> = _addressAvailable
-
-    private val _addressCheckLoading = MutableStateFlow(false)
-    val addressCheckLoading: StateFlow<Boolean> = _addressCheckLoading
-
-    // Nostr bio update prompt
-    private val _showBioPrompt = MutableStateFlow(false)
-    val showBioPrompt: StateFlow<Boolean> = _showBioPrompt
-
-    // Relay backup
-    private val _backupStatus = MutableStateFlow<BackupStatus>(BackupStatus.None)
-    val backupStatus: StateFlow<BackupStatus> = _backupStatus
-
-    private val _restoreFromRelayStatus = MutableStateFlow<RestoreFromRelayStatus>(RestoreFromRelayStatus.Idle)
-    val restoreFromRelayStatus: StateFlow<RestoreFromRelayStatus> = _restoreFromRelayStatus
-
-    // Seed backup acknowledgement
-    private val _seedBackupAcked = MutableStateFlow(sparkRepo.isSeedBackupAcknowledged())
-    val seedBackupAcked: StateFlow<Boolean> = _seedBackupAcked
-
-    // Auto-check for relay backup on SparkSetup entry
-    private val _autoCheckState = MutableStateFlow<AutoCheckState>(AutoCheckState.Idle)
-    val autoCheckState: StateFlow<AutoCheckState> = _autoCheckState
 
     // NWC connection-string restore from NIP-78 backup (per NWC_BACKUP_PARITY.md)
     private val _nwcRestoreState = MutableStateFlow<NwcRestoreState>(NwcRestoreState.Idle)
     val nwcRestoreState: StateFlow<NwcRestoreState> = _nwcRestoreState
     private var nwcRestoreJob: Job? = null
 
-    // Per-relay backup status
-    private val _relayBackupStatuses = MutableStateFlow<List<RelayBackupInfo>>(emptyList())
-    val relayBackupStatuses: StateFlow<List<RelayBackupInfo>> = _relayBackupStatuses
-
-    private val _relayBackupCheckLoading = MutableStateFlow(false)
-    val relayBackupCheckLoading: StateFlow<Boolean> = _relayBackupCheckLoading
-
-    // Delete relay backup
-    private val _deleteBackupStatus = MutableStateFlow<DeleteBackupStatus>(DeleteBackupStatus.Idle)
-    val deleteBackupStatus: StateFlow<DeleteBackupStatus> = _deleteBackupStatus
-
-    // True when relay backup check completed and no relays have the backup
-    private val _backupMissing = MutableStateFlow(false)
-    val backupMissing: StateFlow<Boolean> = _backupMissing
-
-    /** True for the nsec-derived default wallet — drives copy/visibility tweaks. */
-    private val _isDefaultWallet = MutableStateFlow(computeIsDefaultWallet())
-    val isDefaultWallet: StateFlow<Boolean> = _isDefaultWallet
-
     /**
-     * Resolve the active keypair and ask [sparkRepo] whether the stored
-     * mnemonic matches the deterministic nsec derivation. False for
-     * watch-only / signed-out accounts.
-     */
-    private fun computeIsDefaultWallet(): Boolean {
-        val privkey = keyRepo.getKeypair()?.privkey ?: return false
-        return sparkRepo.isDefaultWallet(privkey)
-    }
-
-    /**
-     * Wipe per-wallet display state so swapping wallets (Spark mnemonic
-     * restored from backup, default-wallet generation, paste a new
-     * mnemonic, disconnect, delete) doesn't carry the previous wallet's
+     * Wipe per-wallet display state so swapping wallets (disconnect,
+     * delete, account switch) doesn't carry the previous wallet's
      * transactions / pagination / lightning address into the new
      * wallet's UI. Mirrors iOS `WalletStore.clearDisplayState`.
-     *
-     * The repo-side `_balance` flow is cleared inside `clearMnemonic` /
-     * by the new wallet's first balance fetch — only ViewModel-side
-     * display state needs explicit clearing here.
      */
     private fun clearWalletDisplayState() {
         _transactions.value = emptyList()
         _transactionsError.value = null
         _hasMoreTransactions.value = true
         _lightningAddress.value = null
-        _lightningAddressError.value = null
-        _lightningAddressLoading.value = false
-        // Reset the seed-backup ack flag — sparkRepo.saveMnemonic clears
-        // the underlying prefs key, but the ViewModel-side StateFlow
-        // would otherwise stay at the prior wallet's acknowledged value
-        // until the next refreshState() call.
-        _seedBackupAcked.value = false
     }
-
-    /**
-     * Set after [deleteWallet] so a subsequent [navigateHome] doesn't
-     * immediately re-derive the default wallet — the user explicitly
-     * disconnected to pick a different one. Persisted in
-     * [WalletModeRepository] so the choice survives app restarts.
-     */
-    private var skipAutoCreate: Boolean = walletModeRepo.isAutoCreateSkipped()
-
-    private val _registeredAddress = MutableStateFlow<String?>(null)
 
     private var connectJob: Job? = null
     private var statusCollectJob: Job? = null
     private var connectionMonitorJob: Job? = null
-    private var syncPollJob: Job? = null
     private val httpClient get() = com.wisp.app.relay.HttpClientFactory.createRelayClient()
 
     init {
-        // Wallet backup queries must bypass event dedup so the same event
-        // from multiple relays is emitted (needed for per-relay status tracking)
-        // and so events already seen earlier in the session are still returned.
-        relayPool.registerDedupBypass("relay-status-")
-        relayPool.registerDedupBypass("auto-check-")
-        relayPool.registerDedupBypass("wallet-backup-")
-        relayPool.registerDedupBypass("delete-backup-")
+        // NWC backup queries must bypass event dedup so events already seen
+        // earlier in the session are still returned.
         relayPool.registerDedupBypass("nwc-restore-")
 
-        val mode = walletModeRepo.getMode()
-        when (mode) {
-            WalletMode.NWC -> {
-                if (nwcRepo.hasConnection()) {
-                    _connectionString.value = nwcRepo.getConnectionString() ?: ""
-                    connectNwcWallet(nwcRepo.getConnectionString() ?: "")
-                }
-            }
-            WalletMode.SPARK -> {
-                if (sparkRepo.hasMnemonic()) {
-                    connectSparkWallet()
-                }
-            }
-            WalletMode.NONE -> {}
+        if (_walletMode.value == WalletMode.NWC && nwcRepo.hasConnection()) {
+            _connectionString.value = nwcRepo.getConnectionString() ?: ""
+            connectNwcWallet(nwcRepo.getConnectionString() ?: "")
         }
 
         // Auto-navigate to success screen when an incoming payment is received
-        viewModelScope.launch {
-            sparkRepo.paymentReceived.collect { amountMsats ->
-                if (!accountSuspended && _walletMode.value == WalletMode.SPARK && _currentPage.value is WalletPage.ReceiveInvoice) {
-                    stopSyncPolling()
-                    val amountSats = amountMsats / 1000
-                    pageStack.removeAt(pageStack.lastIndex)
-                    val successPage = WalletPage.ReceiveSuccess(amountSats)
-                    pageStack.add(successPage)
-                    _currentPage.value = successPage
-                    refreshBalance()
-                }
-            }
-        }
         viewModelScope.launch {
             nwcRepo.paymentReceived.collect { amountMsats ->
                 if (!accountSuspended && _walletMode.value == WalletMode.NWC && _currentPage.value is WalletPage.ReceiveInvoice) {
@@ -394,14 +207,6 @@ class WalletViewModel(
                 }
             }
         }
-
-        // Auto-fetch lightning address when Spark connected
-        if (mode == WalletMode.SPARK && sparkRepo.hasMnemonic()) {
-            accountScope.launch {
-                sparkRepo.isConnected.first { it }
-                fetchLightningAddress()
-            }
-        }
     }
 
     // --- Navigation ---
@@ -409,27 +214,16 @@ class WalletViewModel(
     fun navigateTo(page: WalletPage) {
         pageStack.add(page)
         _currentPage.value = page
-        // Auto-check relay backup statuses when entering Settings.
-        // Default wallets re-derive from the nsec so they don't use relay backup.
-        if (page is WalletPage.Settings
-            && _walletMode.value == WalletMode.SPARK
-            && keyRepo.isLoggedIn()
-            && !computeIsDefaultWallet()
-        ) {
-            checkRelayBackupStatuses()
-        }
     }
 
     fun navigateBack(): Boolean {
         if (pageStack.size <= 1) return false
-        val leaving = pageStack.removeAt(pageStack.lastIndex)
-        if (leaving is WalletPage.SendConfirm) clearFeeState()
+        pageStack.removeAt(pageStack.lastIndex)
         _currentPage.value = pageStack.last()
         return true
     }
 
     fun navigateHome() {
-        stopSyncPolling()
         pageStack.clear()
         pageStack.add(WalletPage.Home)
         _currentPage.value = WalletPage.Home
@@ -437,44 +231,6 @@ class WalletViewModel(
         _sendAmount.value = ""
         _sendError.value = null
         _receiveAmount.value = ""
-        _restoreMnemonic.value = ""
-        _deleteConfirmText.value = ""
-        _lightningAddressError.value = null
-        _addressAvailable.value = null
-    }
-
-    /**
-     * Public action for the SparkSetup screen's "Use my default wallet" CTA.
-     * Re-derives the nsec-tied wallet after the user previously disconnected.
-     */
-    fun useDefaultWallet() {
-        if (!keyRepo.hasKeypair()) return
-        // Replace any existing wallet (the user explicitly chose to switch)
-        if (sparkRepo.hasMnemonic()) {
-            sparkRepo.disconnect()
-            sparkRepo.clearMnemonic()
-        }
-        clearWalletDisplayState()
-        startDefaultWallet()
-    }
-
-    private fun startDefaultWallet() {
-        val keypair = keyRepo.getKeypair() ?: return
-        sparkRepo.generateDefaultFromPrivkey(keypair.privkey)
-        _isDefaultWallet.value = true
-        // Don't auto-ack the seed backup here — iOS leaves it false so
-        // the "default wallet is secured by your key" welcome banner can
-        // render, and Android should match. The user dismisses it by
-        // tapping through to the seed view.
-        _seedBackupAcked.value = false
-        skipAutoCreate = false
-        walletModeRepo.setAutoCreateSkipped(false)
-        // Show SparkSetup's Connecting state instead of a brief ModeSelection flicker.
-        if (_currentPage.value !is WalletPage.SparkSetup) {
-            pageStack.add(WalletPage.SparkSetup)
-            _currentPage.value = WalletPage.SparkSetup
-        }
-        connectSparkWallet()
     }
 
     val isOnHome: Boolean get() = pageStack.size <= 1
@@ -484,147 +240,6 @@ class WalletViewModel(
     fun selectNwcMode() {
         navigateTo(WalletPage.NwcSetup)
         searchNwcBackup()
-    }
-
-    fun selectSparkMode() {
-        navigateTo(WalletPage.SparkSetup)
-    }
-
-    private fun autoCheckRelayBackup() {
-        val signer = buildSigner() ?: return
-        _autoCheckState.value = AutoCheckState.Checking
-        accountScope.launch {
-            try {
-                val t0 = System.currentTimeMillis()
-                relayPool.ensureWriteRelaysConnected()
-                val tConn = System.currentTimeMillis()
-                Log.d("WalletBackup", "autoCheck: ensureWriteRelaysConnected took ${tConn - t0}ms")
-                val pubkey = signer.pubkeyHex
-                val ts = System.currentTimeMillis()
-                val subId = "auto-check-$ts"
-                val filter = Nip78.backupFilter(pubkey)
-                val seenEventIds = mutableSetOf<String>()
-                val events = mutableListOf<NostrEvent>()
-                var eoseCount = 0
-                var foundSparkBackup = false
-                Log.d("WalletBackup", "autoCheck: connected=${relayPool.connectedCount.value} all=${relayPool.getRelayUrls().size}")
-                val collectJob = launch {
-                    relayPool.relayEvents.collect { relayEvent: RelayEvent ->
-                        if (relayEvent.subscriptionId == subId && seenEventIds.add(relayEvent.event.id)) {
-                            val dTag = Nip78.extractDTag(relayEvent.event)
-                            if (dTag != null && dTag.startsWith("spark-wallet-backup")) {
-                                foundSparkBackup = true
-                                Log.d("WalletBackup", "autoCheck: spark backup d=$dTag from=${relayEvent.relayUrl} +${System.currentTimeMillis() - tConn}ms")
-                            }
-                            events.add(relayEvent.event)
-                        }
-                    }
-                }
-                val eoseJob = launch {
-                    relayPool.eoseSignals.collect { id ->
-                        if (id == subId) {
-                            eoseCount++
-                            Log.d("WalletBackup", "autoCheck: EOSE $eoseCount +${System.currentTimeMillis() - tConn}ms")
-                        }
-                    }
-                }
-                yield() // ensure collectors are subscribed before sending REQ
-                val allCount = relayPool.getRelayUrls().size
-                val minEose = (allCount * 2 + 2) / 3 // 2/3 majority
-                relayPool.sendToAll(ClientMessage.req(subId, filter))
-                Log.d("WalletBackup", "autoCheck: REQ sent to $allCount relays (need $minEose EOSE) +${System.currentTimeMillis() - tConn}ms")
-
-                // Wait for 2/3 of relays, or early-exit if backup found + majority
-                withTimeoutOrNull(10_000) {
-                    while (eoseCount < allCount) {
-                        delay(200)
-                        if (eoseCount >= minEose && (foundSparkBackup || eoseCount >= allCount - 2)) break
-                    }
-                }
-                val tEose = System.currentTimeMillis()
-                Log.d("WalletBackup", "autoCheck: EOSE wait done $eoseCount/$allCount events=${events.size} (deduped) took ${tEose - tConn}ms (total ${tEose - t0}ms)")
-                collectJob.cancel()
-                eoseJob.cancel()
-                relayPool.closeOnAllRelays(subId)
-
-                // Filter to spark-wallet-backup events only, group by d-tag
-                val sparkEvents = events.filter { event ->
-                    val dTag = Nip78.extractDTag(event)
-                    dTag != null && dTag.startsWith("spark-wallet-backup") && !Nip78.isDeletedBackup(event)
-                }
-                Log.d("WalletBackup", "autoCheck: ${sparkEvents.size} valid spark events out of ${events.size} total")
-
-                val newestPerWallet = sparkEvents
-                    .groupBy { Nip78.extractDTag(it) }
-                    .mapValues { (_, evts) -> evts.maxByOrNull { it.created_at }!! }
-                    .values.sortedByDescending { it.created_at }
-
-                if (newestPerWallet.isEmpty()) {
-                    Log.d("WalletBackup", "autoCheck: no valid spark backup (total ${System.currentTimeMillis() - t0}ms)")
-                    _autoCheckState.value = AutoCheckState.NotFound
-                    return@launch
-                }
-
-                val tDecrypt = System.currentTimeMillis()
-                val decrypted = withContext(Dispatchers.Default) {
-                    newestPerWallet.mapNotNull { event ->
-                        val mnemonic = Nip78.decryptBackup(signer, event)
-                        if (mnemonic != null) {
-                            BackupEntry(
-                                mnemonic = mnemonic,
-                                walletId = Nip78.extractWalletId(event),
-                                createdAt = event.created_at
-                            )
-                        } else {
-                            Log.d("WalletBackup", "autoCheck: decrypt FAILED for d=${Nip78.extractDTag(event)}")
-                            null
-                        }
-                    }
-                }
-                Log.d("WalletBackup", "autoCheck: decrypted ${decrypted.size}/${newestPerWallet.size} in ${System.currentTimeMillis() - tDecrypt}ms")
-
-                when {
-                    decrypted.isEmpty() -> {
-                        _autoCheckState.value = AutoCheckState.NotFound
-                    }
-                    decrypted.size == 1 -> {
-                        val entry = decrypted.first()
-                        Log.d("WalletBackup", "autoCheck: single wallet found, ${entry.mnemonic.split(" ").size} words (total ${System.currentTimeMillis() - t0}ms)")
-                        _autoCheckState.value = AutoCheckState.Found(
-                            mnemonic = entry.mnemonic,
-                            walletId = entry.walletId,
-                            createdAt = entry.createdAt
-                        )
-                    }
-                    else -> {
-                        Log.d("WalletBackup", "autoCheck: ${decrypted.size} wallets found (total ${System.currentTimeMillis() - t0}ms)")
-                        _autoCheckState.value = AutoCheckState.MultipleFound(decrypted)
-                    }
-                }
-            } catch (_: Exception) {
-                _autoCheckState.value = AutoCheckState.NotFound
-            }
-        }
-    }
-
-    fun restoreFromAutoCheck() {
-        val state = _autoCheckState.value
-        if (state is AutoCheckState.Found) {
-            _autoCheckState.value = AutoCheckState.Idle
-            restoreSparkWallet(state.mnemonic)
-        }
-    }
-
-    fun selectAutoCheckBackup(entry: BackupEntry) {
-        _autoCheckState.value = AutoCheckState.Found(
-            mnemonic = entry.mnemonic,
-            walletId = entry.walletId,
-            createdAt = entry.createdAt
-        )
-    }
-
-    fun dismissAutoCheck() {
-        _autoCheckState.value = AutoCheckState.Idle
     }
 
     // --- NWC backup (NIP-78 kind 30078, d=nwc-wallet-backup) ---
@@ -757,8 +372,6 @@ class WalletViewModel(
 
         walletModeRepo.setMode(WalletMode.NWC)
         _walletMode.value = WalletMode.NWC
-        skipAutoCreate = false
-        walletModeRepo.setAutoCreateSkipped(false)
 
         _statusLines.value = emptyList()
         if (!silent) _walletState.value = WalletState.Connecting
@@ -775,83 +388,9 @@ class WalletViewModel(
         startConnectionMonitor(nwcRepo, verifySetup = verifySetup)
     }
 
-    // --- Spark Connection ---
-
-    fun generateSparkWallet() {
-        clearWalletDisplayState()
-        val mnemonic = sparkRepo.newMnemonic()
-        sparkRepo.saveMnemonic(mnemonic)
-        _isDefaultWallet.value = false
-        skipAutoCreate = false
-        walletModeRepo.setAutoCreateSkipped(false)
-        connectSparkWallet()
-    }
-
-    fun updateRestoreMnemonic(value: String) {
-        _restoreMnemonic.value = value
-    }
-
-    fun restoreSparkWallet(mnemonic: String = _restoreMnemonic.value) {
-        val trimmed = mnemonic.trim().lowercase()
-        Log.d("WalletBackup", "restoreSparkWallet: validating ${trimmed.split(" ").size} words")
-        val validationError = sparkRepo.validateMnemonic(trimmed)
-        if (validationError != null) {
-            Log.e("WalletVM", "restoreSparkWallet: validation failed: $validationError")
-            _sendError.value = validationError
-            return
-        }
-        Log.d("WalletBackup", "restoreSparkWallet: saving and connecting")
-        clearWalletDisplayState()
-        sparkRepo.saveMnemonic(trimmed)
-        // Compute isDefaultWallet from the restored mnemonic rather than
-        // hard-coding false — a user restoring their nsec-derived default
-        // via NIP-78 should still light up the "default wallet" surface
-        // (and skip the non-default backup nag).
-        _isDefaultWallet.value = computeIsDefaultWallet()
-        skipAutoCreate = false
-        walletModeRepo.setAutoCreateSkipped(false)
-        connectSparkWallet()
-    }
-
-    fun confirmSparkBackup() {
-        connectSparkWallet()
-    }
-
-    private fun connectSparkWallet(silent: Boolean = false) {
-        walletModeRepo.setMode(WalletMode.SPARK)
-        _walletMode.value = WalletMode.SPARK
-
-        _statusLines.value = emptyList()
-        if (!silent) _walletState.value = WalletState.Connecting
-
-        startStatusCollection(sparkRepo)
-        sparkRepo.connect()
-        startConnectionMonitor(sparkRepo)
-
-        // Fetch lightning address and check relay backup once connected
-        accountScope.launch {
-            sparkRepo.isConnected.first { it }
-            fetchLightningAddress()
-            if (keyRepo.isLoggedIn() && !computeIsDefaultWallet()) {
-                checkRelayBackupStatuses()
-            }
-        }
-    }
-
-    fun showMnemonicBackup() {
-        val mnemonic = sparkRepo.getMnemonic() ?: return
-        navigateTo(WalletPage.SparkBackup(mnemonic))
-    }
-
     fun showNwcExport() {
         val uri = nwcRepo.getConnectionString() ?: return
         navigateTo(WalletPage.NwcExport(uri))
-    }
-
-    fun acknowledgeSeedBackup() {
-        sparkRepo.setSeedBackupAcknowledged(true)
-        _seedBackupAcked.value = true
-        navigateBack()
     }
 
     // --- Shared connection helpers ---
@@ -867,7 +406,7 @@ class WalletViewModel(
 
     private fun startConnectionMonitor(provider: WalletProvider, verifySetup: Boolean = false) {
         connectJob?.cancel()
-        val timeoutMs = if (_walletMode.value == WalletMode.SPARK) 60_000L else 20_000L
+        val timeoutMs = 20_000L
         connectJob = accountScope.launch {
             val connected = kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
                 provider.isConnected.first { it }
@@ -919,9 +458,7 @@ class WalletViewModel(
                         }
                     )
                     // Fetch NWC node info (alias / methods) so the dashboard top
-                    // bar and Wallet Info expandable can render it. Spark exposes
-                    // its identity via getInfo() on the SDK side; no extra fetch
-                    // needed there.
+                    // bar and Wallet Info expandable can render it.
                     if (provider === nwcRepo) {
                         launch { nwcRepo.fetchNodeInfo() }
                         // Best-effort cross-device backup of the URI per
@@ -934,12 +471,12 @@ class WalletViewModel(
                     }
                     // Once the wallet finishes connecting, leave the setup
                     // screen and land on Home — otherwise currentPage stays
-                    // at NwcSetup/SparkSetup and the Scaffold's "Wallet"
+                    // at NwcSetup and the Scaffold's "Wallet"
                     // TopAppBar keeps showing over the dashboard. Guarded
                     // to the setup pages so a connect-during-navigation
                     // doesn't pop the user out of an unrelated sub-page.
                     val page = _currentPage.value
-                    if (page is WalletPage.NwcSetup || page is WalletPage.SparkSetup) {
+                    if (page is WalletPage.NwcSetup) {
                         pageStack.clear()
                         pageStack.add(WalletPage.Home)
                         _currentPage.value = WalletPage.Home
@@ -987,31 +524,12 @@ class WalletViewModel(
     }
 
     fun deleteWallet() {
-        // Custom (non-default) Spark wallets are irreversible without their
-        // seed phrase, so we require the typed DELETE confirmation. Default
-        // wallets re-derive from the nsec on demand, so a tap is enough.
-        if (_walletMode.value == WalletMode.SPARK
-            && !computeIsDefaultWallet()
-            && _deleteConfirmText.value != "DELETE"
-        ) return
-
         connectJob?.cancel()
         statusCollectJob?.cancel()
         connectionMonitorJob?.cancel()
 
-        val wasSpark = _walletMode.value == WalletMode.SPARK
-
-        when (_walletMode.value) {
-            WalletMode.NWC -> {
-                nwcRepo.disconnect()
-                nwcRepo.clearConnection()
-            }
-            WalletMode.SPARK -> {
-                sparkRepo.disconnect()
-                sparkRepo.clearMnemonic()
-            }
-            WalletMode.NONE -> {}
-        }
+        nwcRepo.disconnect()
+        nwcRepo.clearConnection()
 
         walletModeRepo.setMode(WalletMode.NONE)
         _walletMode.value = WalletMode.NONE
@@ -1019,26 +537,10 @@ class WalletViewModel(
         _connectionString.value = ""
         _statusLines.value = emptyList()
         clearWalletDisplayState()
-        _deleteConfirmText.value = ""
-        _isDefaultWallet.value = false
-
-        // Suppress the auto-create on the next navigateHome — the user
-        // explicitly disconnected to choose a different wallet. They'll land
-        // on the wallet-mode picker (Spark vs NWC), matching iOS. Persist
-        // so the choice survives app restarts.
-        skipAutoCreate = true
-        walletModeRepo.setAutoCreateSkipped(true)
 
         pageStack.clear()
         pageStack.add(WalletPage.Home)
-        if (wasSpark && keyRepo.hasKeypair()) {
-            // Drop the user at the top-level wallet picker so they can
-            // re-enter via Spark or NWC, not just Spark. iOS does the
-            // same — Switch is a true "start over" affordance.
-            _currentPage.value = WalletPage.Home
-        } else {
-            _currentPage.value = WalletPage.Home
-        }
+        _currentPage.value = WalletPage.Home
     }
 
     fun disconnectWallet() {
@@ -1046,17 +548,8 @@ class WalletViewModel(
         statusCollectJob?.cancel()
         connectionMonitorJob?.cancel()
 
-        when (_walletMode.value) {
-            WalletMode.NWC -> {
-                nwcRepo.disconnect()
-                nwcRepo.clearConnection()
-            }
-            WalletMode.SPARK -> {
-                sparkRepo.disconnect()
-                sparkRepo.clearMnemonic()
-            }
-            WalletMode.NONE -> {}
-        }
+        nwcRepo.disconnect()
+        nwcRepo.clearConnection()
 
         walletModeRepo.setMode(WalletMode.NONE)
         _walletMode.value = WalletMode.NONE
@@ -1077,7 +570,6 @@ class WalletViewModel(
         navigateHome()
         accountScope.stop()
         nwcRepo.disconnectAndJoin()
-        sparkRepo.disconnectAndJoin()
 
         _walletMode.value = WalletMode.NONE
         _walletState.value = WalletState.NotConnected
@@ -1085,186 +577,32 @@ class WalletViewModel(
         _statusLines.value = emptyList()
         clearWalletDisplayState()
         navigateHome()
-        clearFeeState()
         _isLoading.value = false
         _isLoadingMore.value = false
-        _addressCheckLoading.value = false
-        _showBioPrompt.value = false
-        _registeredAddress.value = null
-        _backupStatus.value = BackupStatus.None
-        _restoreFromRelayStatus.value = RestoreFromRelayStatus.Idle
-        _autoCheckState.value = AutoCheckState.Idle
         _nwcRestoreState.value = NwcRestoreState.Idle
-        _relayBackupStatuses.value = emptyList()
-        _relayBackupCheckLoading.value = false
-        _deleteBackupStatus.value = DeleteBackupStatus.Idle
-        _backupMissing.value = false
-        _isDefaultWallet.value = false
-    }
-
-    fun updateDeleteConfirmText(value: String) {
-        _deleteConfirmText.value = value
     }
 
     fun refreshState() {
         accountScope.start()
         accountSuspended = false
         _balanceUnit.value = walletModeRepo.getBalanceUnit()
-        _walletMode.value = walletModeRepo.getMode()
-        _isDefaultWallet.value = computeIsDefaultWallet()
-        _seedBackupAcked.value = sparkRepo.isSeedBackupAcknowledged()
-        skipAutoCreate = walletModeRepo.isAutoCreateSkipped()
+        _walletMode.value = walletModeRepo.getMode(nwcRepo.hasConnection())
         val mode = _walletMode.value
         val provider = activeProvider
 
-        if (!provider.hasConnection()) {
+        if (mode != WalletMode.NWC || !provider.hasConnection()) {
             _walletState.value = WalletState.NotConnected
             return
         }
 
         if (provider.isConnected.value) {
             refreshBalance()
-            if (mode == WalletMode.SPARK) fetchLightningAddress()
         } else if (_walletState.value is WalletState.Connected) {
             // Was previously connected — reconnect silently
-            when (mode) {
-                WalletMode.NWC -> connectNwcWallet(nwcRepo.getConnectionString() ?: "", silent = true)
-                WalletMode.SPARK -> connectSparkWallet(silent = true)
-                WalletMode.NONE -> {}
-            }
+            connectNwcWallet(nwcRepo.getConnectionString() ?: "", silent = true)
         } else {
-            when (mode) {
-                WalletMode.NWC -> connectNwcWallet(nwcRepo.getConnectionString() ?: "")
-                WalletMode.SPARK -> connectSparkWallet()
-                WalletMode.NONE -> {}
-            }
+            connectNwcWallet(nwcRepo.getConnectionString() ?: "")
         }
-    }
-
-    // --- Lightning Address ---
-
-    fun fetchLightningAddress() {
-        if (_walletMode.value != WalletMode.SPARK) return
-        accountScope.launch {
-            _lightningAddressLoading.value = true
-            val result = sparkRepo.getLightningAddress()
-            result.fold(
-                onSuccess = { address ->
-                    _lightningAddress.value = address
-                },
-                onFailure = { /* silently ignore */ }
-            )
-            _lightningAddressLoading.value = false
-        }
-    }
-
-    fun checkAddressAvailable(username: String) {
-        _addressCheckLoading.value = true
-        _addressAvailable.value = null
-        _lightningAddressError.value = null
-        accountScope.launch {
-            val result = sparkRepo.checkLightningAddressAvailable(username)
-            result.fold(
-                onSuccess = { available ->
-                    _addressAvailable.value = available
-                    if (!available) {
-                        _lightningAddressError.value = "Username is already taken"
-                    }
-                },
-                onFailure = { e ->
-                    _lightningAddressError.value = e.message ?: "Check failed"
-                }
-            )
-            _addressCheckLoading.value = false
-        }
-    }
-
-    fun registerLightningAddress(username: String) {
-        _lightningAddressLoading.value = true
-        _lightningAddressError.value = null
-        accountScope.launch {
-            val result = sparkRepo.registerLightningAddress(username)
-            result.fold(
-                onSuccess = { fullAddress ->
-                    _lightningAddress.value = fullAddress
-                    _registeredAddress.value = fullAddress
-                    _showBioPrompt.value = true
-                    _lightningAddressLoading.value = false
-                },
-                onFailure = { e ->
-                    _lightningAddressError.value = e.message ?: "Registration failed"
-                    _lightningAddressLoading.value = false
-                }
-            )
-        }
-    }
-
-    fun dismissBioPrompt() {
-        _showBioPrompt.value = false
-        _registeredAddress.value = null
-        navigateBack()
-    }
-
-    fun addAddressToNostrBio() {
-        val address = _registeredAddress.value ?: return
-        val signer = buildSigner() ?: return
-        val pubkeyHex = keyRepo.getPubkeyHex() ?: return
-        _showBioPrompt.value = false
-
-        accountScope.launch {
-            try {
-                val profile = eventRepo.getProfileData(pubkeyHex)
-
-                // Build kind 0 JSON preserving all existing fields
-                val content = buildJsonObject {
-                    // Preserve existing fields
-                    if (profile != null) {
-                        profile.name?.let { put("name", JsonPrimitive(it)) }
-                        profile.displayName?.let { put("display_name", JsonPrimitive(it)) }
-                        profile.about?.let { put("about", JsonPrimitive(it)) }
-                        profile.picture?.let { put("picture", JsonPrimitive(it)) }
-                        profile.banner?.let { put("banner", JsonPrimitive(it)) }
-                        profile.nip05?.let { put("nip05", JsonPrimitive(it)) }
-                    }
-                    // Set the lightning address
-                    put("lud16", JsonPrimitive(address))
-                }.toString()
-
-                val event = signer.signEvent(kind = 0, content = content)
-                val msg = ClientMessage.event(event)
-                relayPool.sendToWriteRelays(msg)
-                // Update local profile cache so the UI reflects the change immediately
-                eventRepo.cacheEvent(event)
-            } catch (_: Exception) {
-                // Silently fail — profile update is best-effort
-            }
-
-            _registeredAddress.value = null
-            navigateBack()
-        }
-    }
-
-    fun deleteLightningAddress() {
-        _lightningAddressLoading.value = true
-        _lightningAddressError.value = null
-        accountScope.launch {
-            val result = sparkRepo.deleteLightningAddress()
-            result.fold(
-                onSuccess = {
-                    _lightningAddress.value = null
-                },
-                onFailure = { e ->
-                    _lightningAddressError.value = e.message ?: "Failed to delete address"
-                }
-            )
-            _lightningAddressLoading.value = false
-        }
-    }
-
-    fun resetAddressSetupState() {
-        _addressAvailable.value = null
-        _addressCheckLoading.value = false
-        _lightningAddressError.value = null
     }
 
     // --- Send flow ---
@@ -1366,41 +704,10 @@ class WalletViewModel(
         }
     }
 
-    fun prepareFee(invoice: String) {
-        if (_walletMode.value != WalletMode.SPARK) {
-            _feeState.value = FeeState.Unavailable
-            return
-        }
-        _feeState.value = FeeState.Loading
-        accountScope.launch {
-            sparkRepo.prepareSendPayment(invoice).fold(
-                onSuccess = { (feeSats, prepareData) ->
-                    _preparedPaymentData = prepareData
-                    _feeState.value = if (feeSats != null) FeeState.Estimated(feeSats) else FeeState.Unavailable
-                },
-                onFailure = {
-                    _feeState.value = FeeState.Unavailable
-                }
-            )
-        }
-    }
-
-    private fun clearFeeState() {
-        _feeState.value = FeeState.Idle
-        _preparedPaymentData = null
-    }
-
     fun payInvoice(invoice: String) {
         navigateTo(WalletPage.Sending(invoice))
         accountScope.launch {
-            val preparedData = _preparedPaymentData
-            clearFeeState()
-
-            val result = if (preparedData != null && _walletMode.value == WalletMode.SPARK) {
-                sparkRepo.sendPreparedPayment(preparedData)
-            } else {
-                activeProvider.payInvoice(invoice)
-            }
+            val result = activeProvider.payInvoice(invoice)
 
             result.fold(
                 onSuccess = {
@@ -1419,20 +726,6 @@ class WalletViewModel(
             )
         }
     }
-
-    /**
-     * Broadcast a confirmed on-chain withdrawal on the viewModelScope, so
-     * dismissing the sheet (or leaving the screen) mid-send cannot cancel a
-     * broadcast that is already in flight. The sheet awaits this for its
-     * result; if it's gone by then, the payment still completes and
-     * refreshState runs.
-     */
-    fun withdrawOnchain(quote: WithdrawOnchainQuote): Deferred<Result<String>> =
-        accountScope.async {
-            val result = sparkRepo.executeWithdrawOnchain(quote)
-            if (result.isSuccess) refreshState()
-            result
-        }
 
     // --- Receive flow ---
 
@@ -1465,7 +758,6 @@ class WalletViewModel(
             result.fold(
                 onSuccess = { invoice ->
                     navigateTo(WalletPage.ReceiveInvoice(invoice, amountSats))
-                    startSyncPolling()
                 },
                 onFailure = { e ->
                     _sendError.value = e.message ?: "Failed to create invoice"
@@ -1482,10 +774,7 @@ class WalletViewModel(
         _transactionsError.value = null
         _hasMoreTransactions.value = true
         accountScope.launch {
-            // Kick off sync + zap receipt fetch in background (don't block)
-            if (_walletMode.value == WalletMode.SPARK) {
-                launch { sparkRepo.syncWallet() }
-            }
+            // Kick off zap receipt fetch in background (don't block)
             val zapJob = launch { fetchUserZapReceipts() }
 
             // Show transactions immediately using whatever zap data we already have cached
@@ -1655,7 +944,7 @@ class WalletViewModel(
             zapMaps.senders[tx.paymentHash]?.let { return it }
         }
 
-        // Fuzzy match by amount + timestamp (handles Spark wrapped invoices)
+        // Fuzzy match by amount + timestamp (handles wrapped invoices)
         val bucket = tx.createdAt / 60
         for (off in -5L..5L) {
             val key = "${tx.amountMsats}:${bucket + off}"
@@ -1682,25 +971,7 @@ class WalletViewModel(
 
     fun getProfileData(pubkey: String) = eventRepo.getProfileData(pubkey)
 
-    // --- Sync polling for receive ---
-
-    private fun startSyncPolling() {
-        syncPollJob?.cancel()
-        if (_walletMode.value != WalletMode.SPARK) return
-        syncPollJob = accountScope.launch {
-            while (_currentPage.value is WalletPage.ReceiveInvoice) {
-                sparkRepo.syncWallet()
-                delay(3_000)
-            }
-        }
-    }
-
-    private fun stopSyncPolling() {
-        syncPollJob?.cancel()
-        syncPollJob = null
-    }
-
-    // --- Relay Backup / Restore ---
+    // --- Signing ---
 
     private fun buildSigner(): NostrSigner? {
         return when (keyRepo.getSigningMode()) {
@@ -1710,361 +981,6 @@ class WalletViewModel(
             }
             SigningMode.READ_ONLY -> null
         }
-    }
-
-    fun backupToRelay() {
-        val mnemonic = sparkRepo.getMnemonic() ?: return
-        val signer = buildSigner() ?: run {
-            _backupStatus.value = BackupStatus.Error("No signing key available")
-            return
-        }
-
-        _backupStatus.value = BackupStatus.InProgress
-        accountScope.launch {
-            try {
-                val t0 = System.currentTimeMillis()
-                relayPool.ensureWriteRelaysConnected()
-                val tConn = System.currentTimeMillis()
-                Log.d("WalletBackup", "backup: ensureWriteRelaysConnected took ${tConn - t0}ms")
-                val event = withContext(Dispatchers.Default) {
-                    Nip78.createBackupEvent(signer, mnemonic)
-                }
-                val tEncrypt = System.currentTimeMillis()
-                Log.d("WalletBackup", "backup: createBackupEvent (encrypt+sign) took ${tEncrypt - tConn}ms")
-                val msg = ClientMessage.event(event)
-                val sent = relayPool.sendToWriteRelays(msg)
-                Log.d("WalletBackup", "backup: sendToWriteRelays sent=$sent +${System.currentTimeMillis() - tEncrypt}ms (total ${System.currentTimeMillis() - t0}ms)")
-                if (sent > 0) {
-                    _backupStatus.value = BackupStatus.Success
-                    _backupMissing.value = false
-                    // Allow relays time to index the event, then refresh statuses
-                    delay(3_000)
-                    checkRelayBackupStatuses()
-                } else {
-                    _backupStatus.value = BackupStatus.Error("No relays accepted the backup")
-                }
-            } catch (e: Exception) {
-                _backupStatus.value = BackupStatus.Error(e.message ?: "Backup failed")
-            }
-        }
-    }
-
-    fun resetBackupStatus() {
-        _backupStatus.value = BackupStatus.None
-    }
-
-    fun searchRelayBackup() {
-        val signer = buildSigner() ?: run {
-            _restoreFromRelayStatus.value = RestoreFromRelayStatus.Error("No signing key available")
-            return
-        }
-
-        _restoreFromRelayStatus.value = RestoreFromRelayStatus.Searching
-        accountScope.launch {
-            try {
-                val t0 = System.currentTimeMillis()
-                relayPool.ensureWriteRelaysConnected()
-                val tConn = System.currentTimeMillis()
-                Log.d("WalletBackup", "search: ensureWriteRelaysConnected took ${tConn - t0}ms")
-                val pubkey = signer.pubkeyHex
-                val ts = System.currentTimeMillis()
-                val subId = "wallet-backup-$ts"
-                val filter = Nip78.backupFilter(pubkey)
-                // Collect events until enough relays EOSE
-                val seenEventIds = mutableSetOf<String>()
-                val events = mutableListOf<NostrEvent>()
-                var eoseCount = 0
-                var foundSparkBackup = false
-                Log.d("WalletBackup", "search: connected=${relayPool.connectedCount.value} read=${relayPool.getReadRelayUrls().size} all=${relayPool.getRelayUrls().size}")
-                val collectJob = launch {
-                    relayPool.relayEvents.collect { relayEvent: RelayEvent ->
-                        if (relayEvent.subscriptionId == subId && seenEventIds.add(relayEvent.event.id)) {
-                            val dTag = Nip78.extractDTag(relayEvent.event)
-                            if (dTag != null && dTag.startsWith("spark-wallet-backup")) {
-                                foundSparkBackup = true
-                                Log.d("WalletBackup", "search: spark backup d=$dTag from=${relayEvent.relayUrl} +${System.currentTimeMillis() - tConn}ms")
-                            }
-                            events.add(relayEvent.event)
-                        }
-                    }
-                }
-                val eoseJob = launch {
-                    relayPool.eoseSignals.collect { id ->
-                        if (id == subId) {
-                            eoseCount++
-                            Log.d("WalletBackup", "search: EOSE $eoseCount +${System.currentTimeMillis() - tConn}ms")
-                        }
-                    }
-                }
-                yield() // ensure collectors are subscribed before sending REQ
-                val allCount = relayPool.getRelayUrls().size
-                val minEose = (allCount * 2 + 2) / 3 // 2/3 majority
-                relayPool.sendToAll(ClientMessage.req(subId, filter))
-                Log.d("WalletBackup", "search: REQ sent to $allCount relays (need $minEose EOSE) +${System.currentTimeMillis() - tConn}ms")
-
-                // Wait for 2/3 of relays, or early-exit if backup found + majority
-                withTimeoutOrNull(10_000) {
-                    while (eoseCount < allCount) {
-                        delay(200)
-                        if (eoseCount >= minEose && (foundSparkBackup || eoseCount >= allCount - 2)) break
-                    }
-                }
-                val tEose = System.currentTimeMillis()
-                Log.d("WalletBackup", "search: EOSE wait done $eoseCount/$allCount events=${events.size} (deduped) took ${tEose - tConn}ms (total ${tEose - t0}ms)")
-                collectJob.cancel()
-                eoseJob.cancel()
-                relayPool.closeOnAllRelays(subId)
-
-                // Filter to spark-wallet-backup events only, group by d-tag (keep newest per wallet)
-                val sparkEvents = events.filter { event ->
-                    val dTag = Nip78.extractDTag(event)
-                    dTag != null && dTag.startsWith("spark-wallet-backup") && !Nip78.isDeletedBackup(event)
-                }
-                Log.d("WalletBackup", "search: ${sparkEvents.size} valid spark events out of ${events.size} total")
-
-                // Group by d-tag and keep the newest event per wallet
-                val newestPerWallet = sparkEvents
-                    .groupBy { Nip78.extractDTag(it) }
-                    .mapValues { (_, evts) -> evts.maxByOrNull { it.created_at }!! }
-                    .values.sortedByDescending { it.created_at }
-
-                if (newestPerWallet.isEmpty()) {
-                    Log.d("WalletBackup", "search: no valid spark backup (total ${System.currentTimeMillis() - t0}ms)")
-                    _restoreFromRelayStatus.value = RestoreFromRelayStatus.NotFound
-                    return@launch
-                }
-
-                // Decrypt all unique wallet backups
-                val tDecrypt = System.currentTimeMillis()
-                val decrypted = withContext(Dispatchers.Default) {
-                    newestPerWallet.mapNotNull { event ->
-                        val mnemonic = Nip78.decryptBackup(signer, event)
-                        if (mnemonic != null) {
-                            BackupEntry(
-                                mnemonic = mnemonic,
-                                walletId = Nip78.extractWalletId(event),
-                                createdAt = event.created_at
-                            )
-                        } else {
-                            Log.d("WalletBackup", "search: decrypt FAILED for d=${Nip78.extractDTag(event)}")
-                            null
-                        }
-                    }
-                }
-                Log.d("WalletBackup", "search: decrypted ${decrypted.size}/${newestPerWallet.size} in ${System.currentTimeMillis() - tDecrypt}ms")
-
-                when {
-                    decrypted.isEmpty() -> {
-                        Log.d("WalletBackup", "search: all decryptions failed (total ${System.currentTimeMillis() - t0}ms)")
-                        _restoreFromRelayStatus.value = RestoreFromRelayStatus.NotFound
-                    }
-                    decrypted.size == 1 -> {
-                        val entry = decrypted.first()
-                        Log.d("WalletBackup", "search: single wallet found, ${entry.mnemonic.split(" ").size} words (total ${System.currentTimeMillis() - t0}ms)")
-                        _restoreFromRelayStatus.value = RestoreFromRelayStatus.Found(
-                            mnemonic = entry.mnemonic,
-                            walletId = entry.walletId,
-                            createdAt = entry.createdAt
-                        )
-                    }
-                    else -> {
-                        Log.d("WalletBackup", "search: ${decrypted.size} wallets found (total ${System.currentTimeMillis() - t0}ms)")
-                        _restoreFromRelayStatus.value = RestoreFromRelayStatus.MultipleFound(decrypted)
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("WalletBackup", "search: error", e)
-                _restoreFromRelayStatus.value = RestoreFromRelayStatus.Error(e.message ?: "Search failed")
-            }
-        }
-    }
-
-    fun restoreFromRelayBackup() {
-        val status = _restoreFromRelayStatus.value
-        Log.d("WalletBackup", "restoreFromRelayBackup: status=${status::class.simpleName}")
-        if (status !is RestoreFromRelayStatus.Found) return
-        Log.d("WalletBackup", "restoreFromRelayBackup: restoring wallet ${status.walletId}, ${status.mnemonic.split(" ").size} words")
-        restoreSparkWallet(status.mnemonic)
-        _restoreFromRelayStatus.value = RestoreFromRelayStatus.Idle
-        navigateHome()
-    }
-
-    fun selectBackupToRestore(entry: BackupEntry) {
-        _restoreFromRelayStatus.value = RestoreFromRelayStatus.Found(
-            mnemonic = entry.mnemonic,
-            walletId = entry.walletId,
-            createdAt = entry.createdAt
-        )
-    }
-
-    fun resetRestoreFromRelayStatus() {
-        _restoreFromRelayStatus.value = RestoreFromRelayStatus.Idle
-    }
-
-    // --- Relay Backup Status & Delete ---
-
-    fun checkRelayBackupStatuses() {
-        val mnemonic = sparkRepo.getMnemonic() ?: return
-        val pubkey = keyRepo.getPubkeyHex() ?: return
-
-        _relayBackupCheckLoading.value = true
-        accountScope.launch {
-            try {
-                val t0 = System.currentTimeMillis()
-                relayPool.ensureWriteRelaysConnected()
-                val tConn = System.currentTimeMillis()
-                Log.d("WalletBackup", "statusCheck: ensureWriteRelaysConnected took ${tConn - t0}ms")
-                val relayUrls = relayPool.getRelayUrls()
-                val filter = Nip78.backupFilterForDTag(pubkey, mnemonic)
-                val ts = System.currentTimeMillis()
-                val subId = "relay-status-$ts"
-
-                // Track which relays returned a valid backup
-                val relaysWithBackup = mutableSetOf<String>()
-                // Track EOSE count to know when all relays have responded
-                var eoseCount = 0
-                val relayCount = relayUrls.size
-                val minEose = (relayCount * 2 + 2) / 3 // 2/3 majority
-
-                val collectJob = launch {
-                    relayPool.relayEvents.collect { relayEvent: RelayEvent ->
-                        if (relayEvent.subscriptionId == subId && !Nip78.isDeletedBackup(relayEvent.event)) {
-                            Log.d("WalletBackup", "statusCheck: backup found on ${relayEvent.relayUrl} +${System.currentTimeMillis() - tConn}ms")
-                            relaysWithBackup.add(relayEvent.relayUrl)
-                        }
-                    }
-                }
-
-                val eoseJob = launch {
-                    relayPool.eoseSignals.collect { id ->
-                        if (id == subId) {
-                            eoseCount++
-                            Log.d("WalletBackup", "statusCheck: EOSE $eoseCount/$relayCount +${System.currentTimeMillis() - tConn}ms")
-                        }
-                    }
-                }
-                yield() // ensure both collectors are subscribed before sending REQ
-
-                relayPool.sendToAll(ClientMessage.req(subId, filter))
-                Log.d("WalletBackup", "statusCheck: REQ sent to $relayCount relays (need $minEose EOSE)")
-
-                // Wait until 2/3 of relays respond or timeout
-                withTimeoutOrNull(8_000) {
-                    while (eoseCount < relayCount) {
-                        delay(200)
-                        if (eoseCount >= minEose) break
-                    }
-                }
-                Log.d("WalletBackup", "statusCheck: done EOSE=$eoseCount/$relayCount backupOn=${relaysWithBackup.size} relays (total ${System.currentTimeMillis() - t0}ms)")
-                collectJob.cancel()
-                eoseJob.cancel()
-                relayPool.closeOnAllRelays(subId)
-
-                val statuses = relayUrls.map { url ->
-                    RelayBackupInfo(relayUrl = url, hasBackup = url in relaysWithBackup)
-                }
-                _relayBackupStatuses.value = statuses
-                // Only flag backup as missing if a majority of relays responded
-                val minResponses = (relayCount + 1) / 2 // at least half
-                _backupMissing.value = eoseCount >= minResponses && statuses.none { it.hasBackup }
-            } catch (_: Exception) {
-                // Keep existing statuses on error
-            }
-            _relayBackupCheckLoading.value = false
-        }
-    }
-
-    fun deleteRelayBackup() {
-        val signer = buildSigner() ?: run {
-            _deleteBackupStatus.value = DeleteBackupStatus.Error("No signing key available")
-            return
-        }
-
-        _deleteBackupStatus.value = DeleteBackupStatus.InProgress
-        accountScope.launch {
-            try {
-                val t0 = System.currentTimeMillis()
-                // Query relays for ALL backup events from this author
-                val pubkey = signer.pubkeyHex
-                val ts = System.currentTimeMillis()
-                val subId = "delete-backup-$ts"
-                val filter = Nip78.backupFilter(pubkey)
-
-                val seenEventIds = mutableSetOf<String>()
-                val events = mutableListOf<NostrEvent>()
-                var eoseCount = 0
-                val relayCount = relayPool.getReadRelayUrls().size
-                val minEose = (relayCount * 2 + 2) / 3 // 2/3 majority
-                val collectJob = launch {
-                    relayPool.relayEvents.collect { relayEvent: RelayEvent ->
-                        if (relayEvent.subscriptionId == subId && seenEventIds.add(relayEvent.event.id)) {
-                            Log.d("WalletBackup", "delete: event d=${Nip78.extractDTag(relayEvent.event)} from=${relayEvent.relayUrl} +${System.currentTimeMillis() - t0}ms")
-                            events.add(relayEvent.event)
-                        }
-                    }
-                }
-                val eoseJob = launch {
-                    relayPool.eoseSignals.collect { id ->
-                        if (id == subId) {
-                            eoseCount++
-                            Log.d("WalletBackup", "delete: EOSE $eoseCount/$relayCount +${System.currentTimeMillis() - t0}ms")
-                        }
-                    }
-                }
-                yield()
-                relayPool.sendToReadRelays(ClientMessage.req(subId, filter))
-                Log.d("WalletBackup", "delete: REQ sent to $relayCount read relays (need $minEose EOSE)")
-
-                withTimeoutOrNull(8_000) {
-                    while (eoseCount < relayCount) {
-                        delay(200)
-                        if (eoseCount >= minEose) break
-                    }
-                }
-                val tQuery = System.currentTimeMillis()
-                Log.d("WalletBackup", "delete: query done EOSE=$eoseCount/$relayCount events=${events.size} (deduped) took ${tQuery - t0}ms")
-                collectJob.cancel()
-                eoseJob.cancel()
-                relayPool.closeOnAllRelays(subId)
-
-                // Tombstone every unique d-tag found (skip already-deleted ones)
-                val dTags = events
-                    .filter { !Nip78.isDeletedBackup(it) }
-                    .mapNotNull { Nip78.extractDTag(it) }
-                    .distinct()
-
-                if (dTags.isEmpty()) {
-                    Log.d("WalletBackup", "delete: no active backups to delete (total ${System.currentTimeMillis() - t0}ms)")
-                    _deleteBackupStatus.value = DeleteBackupStatus.Success
-                    _relayBackupStatuses.value = emptyList()
-                    return@launch
-                }
-
-                var totalSent = 0
-                for (dTag in dTags) {
-                    val tombstone = withContext(Dispatchers.Default) {
-                        Nip78.createDeleteEventForDTag(signer, dTag)
-                    }
-                    totalSent += relayPool.sendToAllRelays(ClientMessage.event(tombstone))
-                }
-                Log.d("WalletBackup", "delete: sent ${dTags.size} tombstones to $totalSent relay slots (total ${System.currentTimeMillis() - t0}ms)")
-
-                if (totalSent > 0) {
-                    _deleteBackupStatus.value = DeleteBackupStatus.Success
-                    // Allow relays time to index tombstones, then refresh statuses
-                    delay(3_000)
-                    checkRelayBackupStatuses()
-                } else {
-                    _deleteBackupStatus.value = DeleteBackupStatus.Error("No relays accepted the delete")
-                }
-            } catch (e: Exception) {
-                _deleteBackupStatus.value = DeleteBackupStatus.Error(e.message ?: "Delete failed")
-            }
-        }
-    }
-
-    fun resetDeleteBackupStatus() {
-        _deleteBackupStatus.value = DeleteBackupStatus.Idle
     }
 
     companion object {
