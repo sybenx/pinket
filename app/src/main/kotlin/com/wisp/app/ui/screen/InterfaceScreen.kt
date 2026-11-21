@@ -675,6 +675,7 @@ fun InterfaceScreen(
                     colors = wispSwitchColors()
                 )
             }
+            TranslationSettings(application)
 
             Spacer(Modifier.height(24.dp))
 
