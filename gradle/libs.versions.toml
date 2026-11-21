@@ -21,6 +21,7 @@ zxing = "3.5.3"
 mlkit-translate = "17.0.3"
 mlkit-language-id = "17.0.6"
 mlkit-barcode = "17.3.0"
+lingua = "1.2.2"
 camerax = "1.4.1"
 objectbox = "5.2.0"
 activity-compose = "1.9.3"
@@ -79,6 +80,7 @@ splashscreen = { group = "androidx.core", name = "core-splashscreen", version.re
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 mlkit-translate = { group = "com.google.mlkit", name = "translate", version.ref = "mlkit-translate" }
 mlkit-language-id = { group = "com.google.mlkit", name = "language-id", version.ref = "mlkit-language-id" }
+lingua = { group = "com.github.pemistahl", name = "lingua", version.ref = "lingua" }
 mlkit-barcode = { group = "com.google.mlkit", name = "barcode-scanning", version.ref = "mlkit-barcode" }
 camerax-core = { group = "androidx.camera", name = "camera-core", version.ref = "camerax" }
 camerax-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }

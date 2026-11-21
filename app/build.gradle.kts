@@ -113,6 +113,8 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
     testImplementation(libs.mockito.core)
+    // Only to measure language guessing on real posts (LanguagesTest); not in the app.
+    testImplementation(libs.lingua)
     testRuntimeOnly(libs.secp256k1.kmp.jni.jvm)
     testImplementation(libs.compose.ui.test.junit4)
     debugImplementation(libs.compose.ui.test.manifest)
