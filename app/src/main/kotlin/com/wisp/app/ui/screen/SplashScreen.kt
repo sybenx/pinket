@@ -219,7 +219,7 @@ fun SplashScreen(
                     }
             )
             Text(
-                text = "wisp",
+                text = stringResource(R.string.auth_wisp),
                 style = MaterialTheme.typography.titleLarge.copy(
                     fontFamily = FontFamily.SansSerif,
                     fontSize = 56.sp,
