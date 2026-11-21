@@ -233,8 +233,7 @@ class ThreadViewModel : ViewModel() {
 
         // Direct RelayPool collection — no dependency on FeedViewModel
         collectorJob = viewModelScope.launch {
-            relayPool.relayEvents.collect { (event, relayUrl, subscriptionId) ->
-                if (subscriptionId != "thread-root" && subscriptionId != "thread-replies") return@collect
+            relayPool.relayEventsFor { it == "thread-root" || it == "thread-replies" }.collect { (event, relayUrl, _) ->
 
                 // Route kind 5 deletions through EventRepository so they mark the target deleted
                 // and fire removedEvents; the observer above will prune threadEvents.
@@ -281,8 +280,7 @@ class ThreadViewModel : ViewModel() {
 
         // Also collect thread reactions/engagement + deletions for replies
         viewModelScope.launch {
-            relayPool.relayEvents.collect { (event, _, subscriptionId) ->
-                if (!subscriptionId.startsWith("thread-reactions")) return@collect
+            relayPool.relayEventsFor { it.startsWith("thread-reactions") }.collect { (event, _, _) ->
                 when (event.kind) {
                     5, 7, 6, 1018 -> eventRepo.addEvent(event)
                     9735 -> {

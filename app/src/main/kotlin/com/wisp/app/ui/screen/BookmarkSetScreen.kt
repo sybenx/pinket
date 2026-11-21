@@ -56,7 +56,6 @@ fun BookmarkSetScreen(
     val profileVersion by eventRepo.profileVersion.collectAsState()
     val reactionVersion by eventRepo.reactionVersion.collectAsState()
     val eventCacheVersion by eventRepo.eventCacheVersion.collectAsState()
-    val translationVersion by translationRepo?.version?.collectAsState() ?: remember { mutableStateOf(0) }
 
     val events = remember(bookmarkSet?.eventIds, profileVersion, eventCacheVersion) {
         bookmarkSet?.eventIds?.mapNotNull { id -> eventRepo.getEvent(id) }
@@ -130,9 +129,9 @@ fun BookmarkSetScreen(
                     val userEmojis = reactionVersion.let {
                         userPubkey?.let { eventRepo.getUserReactionEmojis(event.id, it) } ?: emptySet()
                     }
-                    val translationState = remember(translationVersion, event.id) {
-                        translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState()
-                    }
+                    val translationState by remember(event.id) {
+                        translationRepo?.stateFor(event.id) ?: kotlinx.coroutines.flow.flowOf(com.wisp.app.repo.TranslationState())
+                        }.collectAsState(initial = translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState())
                     PostCard(
                         event = event,
                         profile = profile,

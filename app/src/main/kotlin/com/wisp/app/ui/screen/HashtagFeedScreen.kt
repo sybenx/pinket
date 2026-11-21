@@ -311,10 +311,9 @@ private fun HashtagFeedItem(
     val reactionEmojiUrls = remember(reactionVersion, event.id) {
         eventRepo.getReactionEmojiUrls(event.id)
     }
-    val translationVersion by translationRepo?.version?.collectAsState() ?: remember { androidx.compose.runtime.mutableIntStateOf(0) }
-    val translationState = remember(translationVersion, event.id) {
-        translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState()
-    }
+    val translationState by remember(event.id) {
+        translationRepo?.stateFor(event.id) ?: kotlinx.coroutines.flow.flowOf(com.wisp.app.repo.TranslationState())
+        }.collectAsState(initial = translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState())
     val pollVoteCounts = remember(pollVoteVersion, event.id) {
         if (event.kind == 1068) eventRepo.getPollVoteCounts(event.id) else emptyMap()
     }

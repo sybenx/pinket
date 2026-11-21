@@ -127,7 +127,7 @@ class ArticleViewModel : ViewModel() {
         // Collect comment events from both subscriptions
         collectorJob?.cancel()
         collectorJob = viewModelScope.launch {
-            relayPool.relayEvents.collect { (event, relayUrl, subId) ->
+            relayPool.relayEventsFor { it == commentSubId || it == eTagSubId }.collect { (event, relayUrl, subId) ->
                 if (subId == commentSubId || subId == eTagSubId) {
                     if (event.kind != 1 && event.kind != Nip22.KIND_COMMENT) return@collect
                     val isNew = event.id !in commentEvents
@@ -151,7 +151,7 @@ class ArticleViewModel : ViewModel() {
         // Collect engagement events (reactions, zaps, reposts)
         engagementCollectorJob?.cancel()
         engagementCollectorJob = viewModelScope.launch {
-            relayPool.relayEvents.collect { (event, _, subId) ->
+            relayPool.relayEventsFor { it.startsWith("article-engage") }.collect { (event, _, subId) ->
                 if (!subId.startsWith("article-engage")) return@collect
                 when (event.kind) {
                     7, 6 -> eventRepo.addEvent(event)

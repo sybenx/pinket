@@ -113,6 +113,9 @@ object HttpClientFactory {
         val dataSourceFactory = OkHttpDataSource.Factory(client)
         return ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+            // release() blocks the calling (UI) thread until the playback thread lets go of the
+            // decoder; inline videos are released as they scroll off, so cap that wait.
+            .setReleaseTimeoutMs(100)
             .build()
     }
 

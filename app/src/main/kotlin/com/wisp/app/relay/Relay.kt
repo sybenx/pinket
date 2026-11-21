@@ -22,6 +22,9 @@ import java.util.concurrent.TimeUnit
 
 data class RelayFailure(val relayUrl: String, val httpCode: Int?, val message: String)
 
+/** One thread writes to every relay socket, in order, so callers (often the UI thread) never block on OkHttp. */
+private val writer = Executors.newSingleThreadExecutor { r -> Thread(r, "relay-writer").apply { isDaemon = true } }
+
 class Relay(
     val config: RelayConfig,
     private val client: OkHttpClient,
@@ -139,7 +142,7 @@ class Relay(
                     // Successful connection — reset attempt tracking
                     synchronized(attemptLock) { connectAttempts.clear() }
                     _connectionState.tryEmit(true)
-                    drainPendingMessages(webSocket)
+                    writer.execute { drainPendingMessages(webSocket) }
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
@@ -213,11 +216,20 @@ class Relay(
         val ws = webSocket
         if (ws != null && isConnected) {
             onBytesSent?.invoke(config.url, message.length)
-            // Serialize all writes — OkHttp's WebSocket writer is not thread-safe.
-            // Also prevents cancel() (which acquires sendLock) from racing with send().
-            synchronized(sendLock) {
-                return ws.send(message)
+            // Written on the shared writer thread, never the caller's: OkHttp's send takes
+            // its global TaskRunner lock, and a UI-thread caller stalled behind it for up to
+            // 470 ms while scrolling (relays connecting/closing at the same moment).
+            // sendLock still serializes writes and keeps cancel() from racing a send.
+            // A publication that must not be queued (queueIfDisconnected = false) needs the
+            // real answer, so it is still written here; those are rare user actions.
+            if (!queueIfDisconnected) synchronized(sendLock) { return ws.send(message) }
+            writer.execute {
+                synchronized(sendLock) {
+                    if (webSocket === ws) ws.send(message)
+                    else if (pendingMessages.size < maxPendingMessages) pendingMessages.add(message)
+                }
             }
+            return true
         }
         // Queue message for delivery when connected
         if (queueIfDisconnected && pendingMessages.size < maxPendingMessages) {
@@ -267,9 +279,8 @@ class Relay(
             // Acquire sendLock before cancel() to ensure no in-flight send() or
             // drainPendingMessages() is using the WebSocket when we tear it down.
             // Without this, cancel() can null OkHttp's internal writer mid-send → NPE.
-            if (ws != null) {
-                synchronized(sendLock) { ws.cancel() }
-            }
+            // On the writer, after any sends already queued for this socket.
+            if (ws != null) writer.execute { synchronized(sendLock) { ws.cancel() } }
         }
     }
 
@@ -285,9 +296,8 @@ class Relay(
             pendingReconnect = null
             pendingReconnectJob?.cancel()
             pendingReconnectJob = null
-            if (ws != null) {
-                synchronized(sendLock) { ws.cancel() }
-            }
+            // On the writer, after any sends already queued for this socket.
+            if (ws != null) writer.execute { synchronized(sendLock) { ws.cancel() } }
         }
     }
 

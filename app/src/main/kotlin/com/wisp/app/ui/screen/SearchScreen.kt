@@ -341,16 +341,14 @@ fun SearchScreen(
                 }
 
                 else -> {
-                    val translationVersion by translationRepo?.version?.collectAsState()
-                        ?: remember { androidx.compose.runtime.mutableIntStateOf(0) }
                     val pollVoteVersion by eventRepo.pollVoteVersion.collectAsState()
                     val sortedUsers = remember(users) {
                         users.sortedByDescending { contactRepo?.isFollowing(it.pubkey) == true }
                     }
                     val noteResult: @Composable (NostrEvent) -> Unit = { event ->
-                        val translationState = remember(translationVersion, event.id) {
-                            translationRepo?.getState(event.id) ?: TranslationState()
-                        }
+                        val translationState by remember(event.id) {
+                            translationRepo?.stateFor(event.id) ?: kotlinx.coroutines.flow.flowOf(com.wisp.app.repo.TranslationState())
+                            }.collectAsState(initial = translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState())
                         val pollVoteCounts = remember(pollVoteVersion, event.id) {
                             if (event.kind == 1068) eventRepo.getPollVoteCounts(event.id) else emptyMap()
                         }

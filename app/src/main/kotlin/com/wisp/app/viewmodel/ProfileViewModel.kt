@@ -118,7 +118,7 @@ class ProfileViewModel(app: Application) : AndroidViewModel(app) {
 
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
-            relayPool.relayEvents.collect { (event, _, subscriptionId) ->
+            relayPool.relayEventsFor { it == subId }.collect { (event, _, subscriptionId) ->
                 if (subscriptionId != subId) return@collect
                 if (event.kind == 0 && event.pubkey == pubkeyHex) {
                     eventRepo.addEvent(event)

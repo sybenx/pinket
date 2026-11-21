@@ -242,7 +242,6 @@ fun UserProfileScreen(
     val replyCountVersion by eventRepo?.replyCountVersion?.collectAsState() ?: remember { mutableIntStateOf(0) }
     val repostVersion by eventRepo?.repostVersion?.collectAsState() ?: remember { mutableIntStateOf(0) }
     val zapVersion by eventRepo?.zapVersion?.collectAsState() ?: remember { mutableIntStateOf(0) }
-    val translationVersion by translationRepo?.version?.collectAsState() ?: remember { mutableIntStateOf(0) }
     val relaySourceVersion by eventRepo?.relaySourceVersion?.collectAsState() ?: remember { mutableIntStateOf(0) }
     val pollVoteVersion by eventRepo?.pollVoteVersion?.collectAsState() ?: remember { mutableIntStateOf(0) }
 
@@ -744,9 +743,9 @@ fun UserProfileScreen(
                         }
                         items(items = pinnedEvents, key = { "pinned-${it.id}" }) { event ->
                             val eventProfile = eventRepo?.getProfileData(event.pubkey)
-                            val pinnedTranslationState = remember(translationVersion, event.id) {
-                                translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState()
-                            }
+                            val pinnedTranslationState by remember(event.id) {
+                                translationRepo?.stateFor(event.id) ?: kotlinx.coroutines.flow.flowOf(com.wisp.app.repo.TranslationState())
+                                }.collectAsState(initial = translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState())
                             val pinnedPollVoteCounts = remember(pollVoteVersion, event.id) {
                                 if (event.kind == 1068) eventRepo?.getPollVoteCounts(event.id) ?: emptyMap() else emptyMap()
                             }
@@ -837,9 +836,9 @@ fun UserProfileScreen(
                             val hasUserReposted = eventRepo?.hasUserReposted(event.id) == true
                             val hasUserZapped = zapVersion.let { eventRepo?.hasUserZapped(event.id) == true }
                             val eventReactionEmojiUrls = reactionVersion.let { eventRepo?.getReactionEmojiUrls(event.id) ?: emptyMap() }
-                            val rootTranslationState = remember(translationVersion, event.id) {
-                                translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState()
-                            }
+                            val rootTranslationState by remember(event.id) {
+                                translationRepo?.stateFor(event.id) ?: kotlinx.coroutines.flow.flowOf(com.wisp.app.repo.TranslationState())
+                                }.collectAsState(initial = translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState())
                             val rootPollVoteCounts = remember(pollVoteVersion, event.id) {
                                 if (event.kind == 1068) eventRepo?.getPollVoteCounts(event.id) ?: emptyMap() else emptyMap()
                             }
@@ -1069,9 +1068,9 @@ fun UserProfileScreen(
                             val hasUserReposted2 = eventRepo?.hasUserReposted(event.id) == true
                             val hasUserZapped2 = zapVersion.let { eventRepo?.hasUserZapped(event.id) == true }
                             val eventReactionEmojiUrls2 = reactionVersion.let { eventRepo?.getReactionEmojiUrls(event.id) ?: emptyMap() }
-                            val replyTranslationState = remember(translationVersion, event.id) {
-                                translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState()
-                            }
+                            val replyTranslationState by remember(event.id) {
+                                translationRepo?.stateFor(event.id) ?: kotlinx.coroutines.flow.flowOf(com.wisp.app.repo.TranslationState())
+                                }.collectAsState(initial = translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState())
                             val replyPollVoteCounts = remember(pollVoteVersion, event.id) {
                                 if (event.kind == 1068) eventRepo?.getPollVoteCounts(event.id) ?: emptyMap() else emptyMap()
                             }
@@ -1162,9 +1161,9 @@ fun UserProfileScreen(
                             val userEmojis = reactionVersion.let { userPubkey?.let { eventRepo?.getUserReactionEmojis(event.id, it) } ?: emptySet() }
                             val hasUserReposted = eventRepo?.hasUserReposted(event.id) == true
                             val hasUserZapped = zapVersion.let { eventRepo?.hasUserZapped(event.id) == true }
-                            val convTranslationState = remember(translationVersion, event.id) {
-                                translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState()
-                            }
+                            val convTranslationState by remember(event.id) {
+                                translationRepo?.stateFor(event.id) ?: kotlinx.coroutines.flow.flowOf(com.wisp.app.repo.TranslationState())
+                                }.collectAsState(initial = translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState())
                             PostCard(
                                 event = event,
                                 profile = profile,

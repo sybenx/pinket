@@ -1,6 +1,9 @@
 package com.wisp.app.relay
 
 import android.content.SharedPreferences
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.Flow
 import android.util.Log
 import android.util.LruCache
 import com.wisp.app.nostr.ClientMessage
@@ -240,6 +243,14 @@ class RelayPool(private var prefs: SharedPreferences? = null) {
 
     private val _relayEvents = MutableSharedFlow<RelayEvent>(extraBufferCapacity = 4096)
     val relayEvents: SharedFlow<RelayEvent> = _relayEvents
+
+    /**
+     * Relay events for the subscriptions [accept] takes, filtered on a background thread.
+     * Screens collect on the main thread; collecting [relayEvents] directly hopped every event
+     * from every relay onto it just to be dropped, which stalled scrolling (threads especially).
+     */
+    fun relayEventsFor(accept: (String) -> Boolean): Flow<RelayEvent> =
+        relayEvents.filter { accept(it.subscriptionId) }.flowOn(Dispatchers.Default)
 
     private val _eoseSignals = MutableSharedFlow<String>(extraBufferCapacity = 64)
     val eoseSignals: SharedFlow<String> = _eoseSignals

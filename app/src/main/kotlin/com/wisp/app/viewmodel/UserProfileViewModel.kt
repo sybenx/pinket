@@ -1,6 +1,8 @@
 package com.wisp.app.viewmodel
 
 import android.app.Application
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.filter
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -305,10 +307,13 @@ class UserProfileViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         viewModelScope.launch {
-            relayPool.relayEvents.collect { (event, relayUrl, subscriptionId) ->
-                // Track relay hints for all events we see
-                relayHintStore?.addAuthorRelay(event.pubkey, relayUrl)
-                relayHintStore?.extractHintsFromTags(event)
+            // Filtered off the main thread. Relay hints for every event are already recorded by
+            // EventRouter and EventRepository; doing it again here, on the main thread, for every
+            // event from every relay stalled scrolling while a profile sat in the back stack.
+            relayPool.relayEvents
+                .filter { (event, _, id) -> event.pubkey == pubkey || id in SUB_IDS || id.startsWith("followprofiles") || id.startsWith("user-engage") || id == "userposts-more" || id == "userreplies-more" }
+                .flowOn(kotlinx.coroutines.Dispatchers.Default)
+                .collect { (event, relayUrl, subscriptionId) ->
                 // Refresh hints for the profile being viewed
                 if (event.pubkey == pubkey) {
                     _relayHints.value = relayHintStore?.getHints(pubkey) ?: emptySet()

@@ -177,14 +177,7 @@ fun ThreadScreen(
         restoreAnchor = null
     }
 
-    val reactionVersion by eventRepo.reactionVersion.collectAsState()
-    val zapVersion by eventRepo.zapVersion.collectAsState()
-    val replyCountVersion by eventRepo.replyCountVersion.collectAsState()
-    val repostVersion by eventRepo.repostVersion.collectAsState()
-    val relaySourceVersion by eventRepo.relaySourceVersion.collectAsState()
     val nip05Version by nip05Repo?.version?.collectAsState() ?: remember { mutableIntStateOf(0) }
-    val translationVersion by translationRepo?.version?.collectAsState() ?: remember { mutableIntStateOf(0) }
-    val pollVoteVersion by eventRepo.pollVoteVersion.collectAsState()
     val followList by contactRepo.followList.collectAsState()
 
     val resolvedEmojisState = rememberUpdatedState(resolvedEmojis)
@@ -291,42 +284,46 @@ fun ThreadScreen(
                         } else {
                             val event = item.event
                             val depth = item.depth
-                            val profileData = eventRepo.getProfileData(event.pubkey)
-                            val likeCount = reactionVersion.let { eventRepo.getReactionCount(event.id) }
-                            val replyCount = replyCountVersion.let { eventRepo.getReplyCount(event.id) }
-                            val zapSats = zapVersion.let { eventRepo.getZapSats(event.id) }
-                            val userEmojis = reactionVersion.let { userPubkey?.let { eventRepo.getUserReactionEmojis(event.id, it) } ?: emptySet() }
-                            val reactionDetails = reactionVersion.let { eventRepo.getReactionDetails(event.id) }
-                            val zapDetailsList = zapVersion.let { eventRepo.getZapDetails(event.id) }
-                            val repostCount = repostVersion.let { eventRepo.getRepostCount(event.id) }
-                            val repostPubkeys = repostVersion.let { eventRepo.getReposterPubkeys(event.id) }
-                            val hasUserReposted = repostVersion.let { eventRepo.hasUserReposted(event.id) }
-                            val hasUserZapped = zapVersion.let { eventRepo.hasUserZapped(event.id) }
-                            val eventReactionEmojiUrls = reactionVersion.let { eventRepo.getReactionEmojiUrls(event.id) }
-                            val relayIcons = remember(relaySourceVersion, event.id) {
+                            // Per-post observation (as the home feed does): engagement, profile or translation
+                            // changes on one comment no longer recompose every visible comment.
+                            val engagement by remember(event.id) { eventRepo.engagementVersion(event.id) }.collectAsState(initial = 0)
+                            val profileVersion by remember(event.pubkey) { eventRepo.profileVersionFor(event.pubkey) }.collectAsState(initial = 0)
+                            val profileData = remember(profileVersion, event.pubkey) { eventRepo.getProfileData(event.pubkey) }
+                            val likeCount = remember(engagement, event.id) { eventRepo.getReactionCount(event.id) }
+                            val replyCount = remember(engagement, event.id) { eventRepo.getReplyCount(event.id) }
+                            val zapSats = remember(engagement, event.id) { eventRepo.getZapSats(event.id) }
+                            val userEmojis = remember(engagement, event.id, userPubkey) { userPubkey?.let { eventRepo.getUserReactionEmojis(event.id, it) } ?: emptySet() }
+                            val reactionDetails = remember(engagement, event.id) { eventRepo.getReactionDetails(event.id) }
+                            val zapDetailsList = remember(engagement, event.id) { eventRepo.getZapDetails(event.id) }
+                            val repostCount = remember(engagement, event.id) { eventRepo.getRepostCount(event.id) }
+                            val repostPubkeys = remember(engagement, event.id) { eventRepo.getReposterPubkeys(event.id) }
+                            val hasUserReposted = remember(engagement, event.id) { eventRepo.hasUserReposted(event.id) }
+                            val hasUserZapped = remember(engagement, event.id) { eventRepo.hasUserZapped(event.id) }
+                            val eventReactionEmojiUrls = remember(engagement, event.id) { eventRepo.getReactionEmojiUrls(event.id) }
+                            val relayIcons = remember(engagement, event.id) {
                                 eventRepo.getEventRelays(event.id).map { url ->
                                     url to relayInfoRepo?.getIconUrl(url)
                                 }
                             }
-                            val translationState = remember(translationVersion, event.id) {
-                                translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState()
-                            }
-                            val pollVoteCounts = remember(pollVoteVersion, event.id) {
+                            val translationState by remember(event.id) {
+    translationRepo?.stateFor(event.id) ?: kotlinx.coroutines.flow.flowOf(com.wisp.app.repo.TranslationState())
+}.collectAsState(initial = translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState())
+                            val pollVoteCounts = remember(engagement, event.id) {
                                 if (event.kind == 1068) eventRepo.getPollVoteCounts(event.id) else emptyMap()
                             }
-                            val pollTotalVotes = remember(pollVoteVersion, event.id) {
+                            val pollTotalVotes = remember(engagement, event.id) {
                                 if (event.kind == 1068) eventRepo.getPollTotalVotes(event.id) else 0
                             }
-                            val userPollVotes = remember(pollVoteVersion, event.id) {
+                            val userPollVotes = remember(engagement, event.id) {
                                 if (event.kind == 1068) eventRepo.getUserPollVotes(event.id) else emptyList()
                             }
-                            val zapPollSatsCounts = remember(pollVoteVersion, event.id) {
+                            val zapPollSatsCounts = remember(engagement, event.id) {
                                 if (event.kind == 6969) eventRepo.getZapPollSatsCounts(event.id) else emptyMap()
                             }
-                            val zapPollTotalSats = remember(pollVoteVersion, event.id) {
+                            val zapPollTotalSats = remember(engagement, event.id) {
                                 if (event.kind == 6969) eventRepo.getZapPollTotalSats(event.id) else 0L
                             }
-                            val userZapPollVote = remember(pollVoteVersion, event.id) {
+                            val userZapPollVote = remember(engagement, event.id) {
                                 if (event.kind == 6969) eventRepo.getUserZapPollVote(event.id) else null
                             }
                             val indentPadding = threadIndentDp(depth)
@@ -491,24 +488,28 @@ fun ThreadScreen(
                         }
                         if (spamExpanded) {
                             items(items = spamThread, key = { "spam_${it.first.id}" }, contentType = { "post" }) { (event, _) ->
-                                val profileData = eventRepo.getProfileData(event.pubkey)
-                                val likeCount = reactionVersion.let { eventRepo.getReactionCount(event.id) }
-                                val replyCount = replyCountVersion.let { eventRepo.getReplyCount(event.id) }
-                                val zapSats = zapVersion.let { eventRepo.getZapSats(event.id) }
-                                val userEmojis = reactionVersion.let { userPubkey?.let { eventRepo.getUserReactionEmojis(event.id, it) } ?: emptySet() }
-                                val reactionDetails = reactionVersion.let { eventRepo.getReactionDetails(event.id) }
-                                val zapDetailsList = zapVersion.let { eventRepo.getZapDetails(event.id) }
-                                val repostCount = repostVersion.let { eventRepo.getRepostCount(event.id) }
-                                val repostPubkeys = repostVersion.let { eventRepo.getReposterPubkeys(event.id) }
-                                val hasUserReposted = repostVersion.let { eventRepo.hasUserReposted(event.id) }
-                                val hasUserZapped = zapVersion.let { eventRepo.hasUserZapped(event.id) }
-                                val eventReactionEmojiUrls = reactionVersion.let { eventRepo.getReactionEmojiUrls(event.id) }
-                                val relayIcons = remember(relaySourceVersion, event.id) {
+                                // Per-post observation (as the home feed does): engagement, profile or translation
+                                // changes on one comment no longer recompose every visible comment.
+                                val engagement by remember(event.id) { eventRepo.engagementVersion(event.id) }.collectAsState(initial = 0)
+                                val profileVersion by remember(event.pubkey) { eventRepo.profileVersionFor(event.pubkey) }.collectAsState(initial = 0)
+                                val profileData = remember(profileVersion, event.pubkey) { eventRepo.getProfileData(event.pubkey) }
+                                val likeCount = remember(engagement, event.id) { eventRepo.getReactionCount(event.id) }
+                                val replyCount = remember(engagement, event.id) { eventRepo.getReplyCount(event.id) }
+                                val zapSats = remember(engagement, event.id) { eventRepo.getZapSats(event.id) }
+                                val userEmojis = remember(engagement, event.id, userPubkey) { userPubkey?.let { eventRepo.getUserReactionEmojis(event.id, it) } ?: emptySet() }
+                                val reactionDetails = remember(engagement, event.id) { eventRepo.getReactionDetails(event.id) }
+                                val zapDetailsList = remember(engagement, event.id) { eventRepo.getZapDetails(event.id) }
+                                val repostCount = remember(engagement, event.id) { eventRepo.getRepostCount(event.id) }
+                                val repostPubkeys = remember(engagement, event.id) { eventRepo.getReposterPubkeys(event.id) }
+                                val hasUserReposted = remember(engagement, event.id) { eventRepo.hasUserReposted(event.id) }
+                                val hasUserZapped = remember(engagement, event.id) { eventRepo.hasUserZapped(event.id) }
+                                val eventReactionEmojiUrls = remember(engagement, event.id) { eventRepo.getReactionEmojiUrls(event.id) }
+                                val relayIcons = remember(engagement, event.id) {
                                     eventRepo.getEventRelays(event.id).map { url -> url to relayInfoRepo?.getIconUrl(url) }
                                 }
-                                val translationState = remember(translationVersion, event.id) {
-                                    translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState()
-                                }
+                                val translationState by remember(event.id) {
+    translationRepo?.stateFor(event.id) ?: kotlinx.coroutines.flow.flowOf(com.wisp.app.repo.TranslationState())
+}.collectAsState(initial = translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState())
                                 Column {
                                     PostCard(
                                         event = event,

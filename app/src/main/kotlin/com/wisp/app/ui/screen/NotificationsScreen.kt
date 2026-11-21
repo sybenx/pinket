@@ -1437,10 +1437,9 @@ private fun ReferencedNotePostCard(
     val eventReactionEmojiUrls = remember(params.reactionVersion, event.id) {
         eventRepo.getReactionEmojiUrls(event.id)
     }
-    val translationVersion by params.translationRepo?.version?.collectAsState() ?: remember { mutableIntStateOf(0) }
-    val translationState = remember(translationVersion, event.id) {
-        params.translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState()
-    }
+    val translationState by remember(event.id) {
+        params.translationRepo?.stateFor(event.id) ?: kotlinx.coroutines.flow.flowOf(com.wisp.app.repo.TranslationState())
+        }.collectAsState(initial = params.translationRepo?.getState(event.id) ?: com.wisp.app.repo.TranslationState())
     val pollVoteCounts = remember(params.pollVoteVersion, event.id) {
         if (event.kind == 1068) eventRepo.getPollVoteCounts(event.id) else emptyMap()
     }
