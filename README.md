@@ -1,4 +1,6 @@
-# Wisp
+# Pinket
+
+Pinket is Aaron's fork of Wisp ([barrydeen/wisp](https://github.com/barrydeen/wisp), archived Nov 2026). Pinket is the old Worcestershire name for a will-o'-the-wisp. The rest of this README describes upstream Wisp, by Barry Deen, and still applies.
 
 A minimal, performant Android client for the [Nostr](https://nostr.com) protocol. Built with Kotlin and Jetpack Compose (Material 3), Wisp prioritizes decentralization, intelligent relay routing, strong privacy, and a clean native experience.
 

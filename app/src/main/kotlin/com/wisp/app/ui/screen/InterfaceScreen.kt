@@ -1033,7 +1033,7 @@ fun InterfaceScreen(
             var diagnosticEnabled by remember { mutableStateOf(DiagnosticLogger.isEnabled) }
 
             Text(
-                text = "Wisp v$versionName",
+                text = "Pinket v$versionName",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
@@ -1043,6 +1043,12 @@ fun InterfaceScreen(
                         if (tapCount >= 5) diagnosticRevealed = true
                     }
                     .padding(vertical = 8.dp)
+            )
+            Text(
+                text = "A fork of Wisp by Barry Deen",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                modifier = Modifier.fillMaxWidth()
             )
 
             if (diagnosticRevealed) {

@@ -59,7 +59,7 @@
     <string name="auth_log_in">Iniciar Sesión</string>
     <string name="auth_or_log_in_with_key">O inicia sesión con tu clave</string>
     <string name="auth_nsec_or_npub">nsec o npub…</string>
-    <string name="auth_wisp">wisp</string>
+    <string name="auth_wisp">pinket</string>
     <string name="auth_tagline">una pequeña interfaz para desplazarte por publicaciones</string>
     <string name="auth_hide_key">Ocultar clave</string>
     <string name="auth_show_key">Mostrar clave</string>
@@ -392,11 +392,11 @@
     <string name="onboarding_welcome_back">Bienvenido de nuevo</string>
     <string name="onboarding_lets_get_set_up">Configuremos tu cuenta</string>
     <string name="onboarding_your_network_relays">Tu red, tus relays</string>
-    <string name="onboarding_network_description">Wisp descubre qué relays usan realmente tus amigos, y luego se conecta directamente a esos relays. Esto significa entregas más rápidas y menos publicaciones perdidas — sin servidor central.</string>
+    <string name="onboarding_network_description">Pinket descubre qué relays usan realmente tus amigos, y luego se conecta directamente a esos relays. Esto significa entregas más rápidas y menos publicaciones perdidas — sin servidor central.</string>
     <string name="onboarding_quick_follow">Seguir rápido</string>
     <string name="onboarding_long_press_hint">Mantén presionada cualquier foto de perfil para seguir o dejar de seguir</string>
     <string name="onboarding_try_it">Pruébalo — mantén presionada la imagen de arriba</string>
-    <string name="onboarding_lightning_wallet_info">Wisp soporta zaps con una billetera Lightning integrada o Nostr Wallet Connect. Puedes configurarlo en cualquier momento desde la pantalla de Billetera.</string>
+    <string name="onboarding_lightning_wallet_info">Pinket soporta zaps con una billetera Lightning integrada o Nostr Wallet Connect. Puedes configurarlo en cualquier momento desde la pantalla de Billetera.</string>
     <string name="onboarding_setting_things_up">Configurando</string>
     <string name="onboarding_youre_all_set">¡Todo listo!</string>
     <string name="onboarding_mapping_graph">Mapeando tu grafo social…</string>
@@ -409,7 +409,7 @@
     <string name="onboarding_almost_there">Ya casi…</string>
     <string name="onboarding_please_wait">Por favor espera…</string>
     <string name="onboarding_publishing">Publicando…</string>
-    <string name="onboarding_wisp_logo">Logo de Wisp</string>
+    <string name="onboarding_wisp_logo">Logo de Pinket</string>
     <string name="onboarding_follow_all_x">Seguir a Todos (%d)</string>
 
     <!-- Zap / Wallet -->
@@ -627,7 +627,7 @@
     <string name="splash_log_in">Iniciar sesión</string>
     <string name="online_now">En línea ahora</string>
     <string name="online_in_network">%d en línea en tu red</string>
-    <string name="cd_wisp_logo">Logo de Wisp</string>
+    <string name="cd_wisp_logo">Logo de Pinket</string>
 
     <!-- NIP-29 Chat Rooms -->
     <string name="tab_direct_messages">Mensajes directos</string>

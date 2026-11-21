@@ -1,6 +1,6 @@
 name: Release
 
-# A tag v1.2.3 builds the signed APK wisp-1.2.3.apk (cc.aaro.wisp) and attaches it to a
+# Pinket release: a tag v1.2.3 builds the signed APK pinket-1.2.3.apk (cc.aaro.wisp) and attaches it to a
 # GitHub release, the file Obtainium installs from
 
 on:
@@ -33,15 +33,15 @@ jobs:
           export WISP_KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
           if [ "$GITHUB_REF_TYPE" = tag ]; then export WISP_VERSION="${GITHUB_REF_NAME#v}"; else export WISP_VERSION=0.0.1; fi
           ./gradlew --no-daemon :app:assembleRelease
-          cp app/build/outputs/apk/release/app-release.apk "wisp-${WISP_VERSION}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "pinket-${WISP_VERSION}.apk"
 
       - name: Show signing certificate
         run: |
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)
-          "$BT/apksigner" verify --print-certs wisp-*.apk | grep SHA-256
+          "$BT/apksigner" verify --print-certs pinket-*.apk | grep SHA-256
 
       - name: Publish
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" wisp-*.apk --title "Wisp $GITHUB_REF_NAME" --notes-from-tag
+        run: gh release create "$GITHUB_REF_NAME" pinket-*.apk --title "Pinket $GITHUB_REF_NAME" --notes-from-tag

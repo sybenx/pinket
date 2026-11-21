@@ -25,7 +25,7 @@ android {
         versionName = wispVersion ?: "1.4.0-dev"
         versionCode = wispVersion?.split(".")?.map { it.toInt() }
             ?.let { (a, b, c) -> a * 10000 + b * 100 + c } ?: 10399
-        resValue("string", "app_name", "Wisp")
+        resValue("string", "app_name", "Pinket")
 
         ndk {
             abiFilters += "arm64-v8a"
@@ -57,7 +57,7 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = debugApplicationIdSuffix
-            resValue("string", "app_name", "Wisp Debug")
+            resValue("string", "app_name", "Pinket Debug")
         }
 
         release {
@@ -76,7 +76,7 @@ android {
             // it without the release keystore. Installs alongside debug/release.
             initWith(getByName("release"))
             applicationIdSuffix = ".staging"
-            resValue("string", "app_name", "Wisp Staging")
+            resValue("string", "app_name", "Pinket Staging")
             signingConfig = signingConfigs.getByName("debug")
         }
     }

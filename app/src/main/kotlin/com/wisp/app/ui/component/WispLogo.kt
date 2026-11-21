@@ -23,10 +23,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * The Wisp app logo — a glowing core with flowing wisp trails.
+ * The Pinket app logo (unused; kept from Wisp) — a glowing core with flowing wisp trails.
  *
  * @param size The overall size of the logo mark (icon only)
- * @param showText Whether to show the "wisp" wordmark below the icon
+ * @param showText Whether to show the "pinket" wordmark below the icon
  */
 @Composable
 fun WispLogo(
@@ -48,7 +48,7 @@ fun WispLogo(
         if (showText) {
             Spacer(Modifier.height(12.dp))
             Text(
-                text = "wisp",
+                text = "pinket",
                 style = MaterialTheme.typography.titleLarge.copy(
                     fontSize = 36.sp,
                     fontWeight = FontWeight.Bold,

@@ -22,7 +22,7 @@ fun CrashReportDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Wisp crashed") },
+        title = { Text("Pinket crashed") },
         text = {
             Text(
                 text = crashLog,
