@@ -93,6 +93,7 @@ import com.wisp.app.repo.EventRepository
 import com.wisp.app.repo.Nip05Repository
 import com.wisp.app.repo.ZapDetail
 import com.wisp.app.repo.Nip05Status
+import com.wisp.app.repo.LocalTranslationRepository
 import com.wisp.app.repo.TranslationState
 import com.wisp.app.repo.TranslationStatus
 import com.wisp.app.ui.theme.WispThemeColors
@@ -208,12 +209,13 @@ fun PostCard(
 
     val hasReactionDetails = reactionDetails.isNotEmpty() || zapDetails.isNotEmpty() || repostDetails.isNotEmpty()
     var expandedDetails by remember { mutableStateOf(false) }
-    var showTranslation by remember { mutableStateOf(true) }
+    // Translated posts show the translation in place; the original is a tap away.
+    var showTranslation by remember(event.id) { mutableStateOf(true) }
+    val translationRepo = LocalTranslationRepository.current
 
-    LaunchedEffect(event.id, autoTranslate, translationState.status) {
-        if (autoTranslate && translationState.status == TranslationStatus.IDLE) {
-            onTranslate()
-        }
+    // On screen: translate it, or leave a hint, if it isn't in a language you read. Scrolling away cancels.
+    LaunchedEffect(event.id, autoTranslate, translationRepo) {
+        if (event.kind != 30023) translationRepo?.lookAt(event, autoTranslate)
     }
 
     // Wrap content + divider so the divider can run full-width while the
@@ -619,6 +621,21 @@ fun PostCard(
                 contentHasMedia(event.content, imetaMap)
             }
 
+            val bodyContent = if (translationState.status == TranslationStatus.DONE && showTranslation &&
+                translationState.translatedText.isNotEmpty()) translationState.translatedText else event.content
+            if (event.kind != 30023) {
+                TranslationLine(
+                    state = translationState,
+                    showTranslation = showTranslation,
+                    onToggle = { showTranslation = !showTranslation },
+                    onTranslateFrom = { code, keep ->
+                        showTranslation = true
+                        translationRepo?.translateFrom(event, code, keep)
+                    },
+                    onPickerShown = { translationRepo?.pickerShown(event.id) }
+                )
+            }
+
             if (event.kind == 30023) {
                 ArticlePreviewCard(
                     event = event,
@@ -627,7 +644,7 @@ fun PostCard(
                 )
             } else if (hasMedia) {
                 RichContent(
-                    content = event.content,
+                    content = bodyContent,
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurface,
                     emojiMap = emojiMap,
@@ -662,7 +679,7 @@ fun PostCard(
                         contentAlignment = Alignment.TopStart
                     ) {
                         RichContent(
-                            content = event.content,
+                            content = bodyContent,
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurface,
                             emojiMap = emojiMap,
@@ -720,73 +737,6 @@ fun PostCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-            }
-
-            // Inline translation display
-            when (translationState.status) {
-                TranslationStatus.IDENTIFYING_LANGUAGE,
-                TranslationStatus.DOWNLOADING_MODEL,
-                TranslationStatus.TRANSLATING -> {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(14.dp),
-                            strokeWidth = 1.5.dp,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = when (translationState.status) {
-                                TranslationStatus.IDENTIFYING_LANGUAGE -> stringResource(R.string.translate_detecting_language)
-                                TranslationStatus.DOWNLOADING_MODEL -> stringResource(R.string.translate_downloading_model)
-                                else -> stringResource(R.string.translate_translating)
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                TranslationStatus.DONE -> {
-                    if (showTranslation) {
-                        Column(modifier = Modifier.padding(top = 4.dp)) {
-                            HorizontalDivider(
-                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                                thickness = 0.5.dp
-                            )
-                            Text(
-                                text = stringResource(R.string.translate_translated_from, translationState.sourceLanguage),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
-                            )
-                            val emojiMap = remember(event.id) { Nip30.parseEmojiTags(event) }
-                            val imetaMap = remember(event.id) { parseImetaTags(event.tags) }
-                            RichContent(
-                                content = translationState.translatedText,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                emojiMap = emojiMap,
-                                imetaMap = imetaMap,
-                                eventRepo = eventRepo,
-                                onProfileClick = onNavigateToProfile,
-                                onNoteClick = onQuotedNoteClick,
-                                noteActions = noteActions,
-                                quoteDepth = quoteDepth
-                            )
-                        }
-                    }
-                }
-                TranslationStatus.ERROR -> {
-                    Text(
-                        text = translationState.errorMessage,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    )
-                }
-                else -> {}
             }
 
             // Poll section

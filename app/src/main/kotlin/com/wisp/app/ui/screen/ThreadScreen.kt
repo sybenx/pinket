@@ -436,7 +436,7 @@ fun ThreadScreen(
                                         onQuotedNoteClick = onQuotedNoteClick,
                                         noteActions = noteActions,
                                         translationState = translationState,
-                                        onTranslate = { translationRepo?.translate(event.id, event.content) },
+                                        onTranslate = { translationRepo?.translate(event) },
                                         autoTranslate = autoTranslate,
                                         pollVoteCounts = pollVoteCounts,
                                         pollTotalVotes = pollTotalVotes,
@@ -556,7 +556,7 @@ fun ThreadScreen(
                                         onQuotedNoteClick = onQuotedNoteClick,
                                         noteActions = noteActions,
                                         translationState = translationState,
-                                        onTranslate = { translationRepo?.translate(event.id, event.content) },
+                                        onTranslate = { translationRepo?.translate(event) },
                                         autoTranslate = autoTranslate,
                                     )
                                     Row(

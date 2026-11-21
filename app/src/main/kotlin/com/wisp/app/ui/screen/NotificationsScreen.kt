@@ -1578,7 +1578,7 @@ private fun ReferencedNotePostCard(
             isInList = params.isInList(event.id),
             onQuotedNoteClick = params.onNoteClick,
             translationState = translationState,
-            onTranslate = { params.translationRepo?.translate(event.id, event.content) },
+            onTranslate = { params.translationRepo?.translate(event) },
             autoTranslate = params.autoTranslate,
             pollVoteCounts = pollVoteCounts,
             pollTotalVotes = pollTotalVotes,

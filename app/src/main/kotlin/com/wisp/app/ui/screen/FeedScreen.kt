@@ -1419,7 +1419,7 @@ private fun FeedItem(
         val rootId = Nip10.getRootId(event) ?: Nip10.getReplyTarget(event) ?: event.id
         viewModel.muteThread(rootId)
     }
-    val onTranslateCb = { viewModel.translateEvent(event.id, event.content) }
+    val onTranslateCb = { viewModel.translateEvent(event) }
     if (isGalleryEvent(event)) {
         GalleryCard(
             event = event,

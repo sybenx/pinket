@@ -371,7 +371,7 @@ private fun HashtagFeedItem(
         onQuotedNoteClick = noteActions.onNoteClick,
         noteActions = noteActions,
         translationState = translationState,
-        onTranslate = { translationRepo?.translate(event.id, event.content) },
+        onTranslate = { translationRepo?.translate(event) },
         autoTranslate = autoTranslate,
         pollVoteCounts = pollVoteCounts,
         pollTotalVotes = pollTotalVotes,

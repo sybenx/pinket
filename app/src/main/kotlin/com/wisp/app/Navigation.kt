@@ -659,7 +659,10 @@ fun WispNavHost(
     var pipFullScreenAspectRatio by remember { mutableStateOf(16f / 9f) }
 
     Box(modifier = Modifier.padding(innerPadding)) {
-    CompositionLocalProvider(LocalCanSign provides (signingMode != SigningMode.READ_ONLY)) {
+    CompositionLocalProvider(
+        LocalCanSign provides (signingMode != SigningMode.READ_ONLY),
+        com.wisp.app.repo.LocalTranslationRepository provides feedViewModel.translationRepo
+    ) {
     NavHost(
         navController = navController,
         startDestination = startDestination

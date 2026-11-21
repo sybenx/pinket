@@ -149,7 +149,7 @@ fun BookmarkSetScreen(
                         onBlockAuthor = { onBlockUser(event.pubkey) },
                         isOwnEvent = event.pubkey == userPubkey,
                         translationState = translationState,
-                        onTranslate = { translationRepo?.translate(event.id, event.content) },
+                        onTranslate = { translationRepo?.translate(event) },
                         autoTranslate = autoTranslate
                     )
                 }

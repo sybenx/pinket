@@ -396,7 +396,7 @@ fun SearchScreen(
                             isInList = event.id in listedIds,
                             onDelete = { onDeleteEvent(event.id, event.kind) },
                             translationState = translationState,
-                            onTranslate = { translationRepo?.translate(event.id, event.content) },
+                            onTranslate = { translationRepo?.translate(event) },
                             autoTranslate = autoTranslate,
                             pollVoteCounts = pollVoteCounts,
                             pollTotalVotes = pollTotalVotes,

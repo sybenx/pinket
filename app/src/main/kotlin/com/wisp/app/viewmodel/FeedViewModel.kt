@@ -282,7 +282,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
     val customEmojiRepo = CustomEmojiRepository(app, pubkeyHex)
-    val translationRepo = TranslationRepository()
+    val translationRepo = TranslationRepository(app) { getUserPubkey() }
     val zapPrefs = ZapPreferences(app, pubkeyHex)
     val powPrefs = PowPreferences(app)
     private val processingDispatcher = Dispatchers.Default
@@ -421,7 +421,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
 
     fun getUserPubkey(): String? = keyRepo.getPubkeyHex()
     fun resetNewNoteCount() = eventRepo.resetNewNoteCount()
-    fun translateEvent(eventId: String, content: String) = translationRepo.translate(eventId, content)
+    fun translateEvent(event: NostrEvent) = translationRepo.translate(event)
     fun queueProfileFetch(pubkey: String) = metadataFetcher.queueProfileFetch(pubkey)
     fun forceProfileFetch(pubkey: String) = metadataFetcher.forceProfileFetch(pubkey)
     fun markLoadingComplete() = feedSub.markLoadingComplete()
