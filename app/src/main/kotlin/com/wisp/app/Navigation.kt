@@ -1953,7 +1953,8 @@ fun WispNavHost(
                     spamClassifier = feedViewModel.nspamClassifier,
                     spamAuthorCache = feedViewModel.spamAuthorCache,
                     safetyPrefs = feedViewModel.safetyPrefs,
-                    contactRepo = feedViewModel.contactRepo
+                    contactRepo = feedViewModel.contactRepo,
+                    extendedNetworkRepo = feedViewModel.extendedNetworkRepo
                 )
             }
             androidx.compose.runtime.DisposableEffect(Unit) {

@@ -21,6 +21,8 @@ import com.wisp.app.repo.RelayHintStore
 import com.wisp.app.repo.RelayListRepository
 import com.wisp.app.repo.SafetyPreferences
 import com.wisp.app.repo.SpamAuthorCache
+import com.wisp.app.repo.ExtendedNetworkRepository
+import com.wisp.app.repo.ReplyGate
 import com.wisp.app.viewmodel.thread.ThreadFlattener
 import com.wisp.app.viewmodel.thread.ThreadItem
 import kotlinx.coroutines.Dispatchers
@@ -28,6 +30,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -73,6 +76,8 @@ class ThreadViewModel : ViewModel() {
     // Spam filter
     private var spamClassifier: NSpamClassifier? = null
     private var spamAuthorCache: SpamAuthorCache? = null
+    private var extendedNetworkRepoRef: ExtendedNetworkRepository? = null
+    private var signalsObserverJob: kotlinx.coroutines.Job? = null
     private var safetyPrefs: SafetyPreferences? = null
     private var contactRepo: ContactRepository? = null
     private var eventRepoRef: EventRepository? = null
@@ -150,7 +155,8 @@ class ThreadViewModel : ViewModel() {
         spamClassifier: NSpamClassifier? = null,
         spamAuthorCache: SpamAuthorCache? = null,
         safetyPrefs: SafetyPreferences? = null,
-        contactRepo: ContactRepository? = null
+        contactRepo: ContactRepository? = null,
+        extendedNetworkRepo: ExtendedNetworkRepository? = null
     ) {
         seedEventId = eventId
         this.muteRepo = muteRepo
@@ -158,7 +164,15 @@ class ThreadViewModel : ViewModel() {
         this.spamAuthorCache = spamAuthorCache
         this.safetyPrefs = safetyPrefs
         this.contactRepo = contactRepo
+        this.extendedNetworkRepoRef = extendedNetworkRepo
         this.eventRepoRef = eventRepo
+        // Rebuild when the follows-graph reply signals finish loading.
+        signalsObserverJob?.cancel()
+        signalsObserverJob = extendedNetworkRepo?.let { repo ->
+            viewModelScope.launch {
+                repo.replySignalsVersion.drop(1).collect { scheduleRebuild() }
+            }
+        }
         // Reactively rebuild thread when blocked users change (e.g. blocking mid-thread)
         muteObserverJob?.cancel()
         muteObserverJob = muteRepo?.let { repo ->
@@ -455,6 +469,7 @@ class ThreadViewModel : ViewModel() {
         rebuildJob?.cancel()
         metadataBatchJob?.cancel()
         muteObserverJob?.cancel()
+        signalsObserverJob?.cancel()
         deletionObserverJob?.cancel()
         relayPoolRef?.let { pool ->
             pool.closeOnAllRelays("thread-root")
@@ -479,18 +494,28 @@ class ThreadViewModel : ViewModel() {
             if (eventRepoRef?.isWotFiltered(event.pubkey, event.kind) == true) continue
             if (isIgnoredStrayKind1(event)) continue
 
-            if (spamEnabled && spamClassifier != null &&
+            if (spamEnabled &&
                 event.pubkey != currentUserPubkey &&
                 contactRepo?.isFollowing(event.pubkey) != true &&
                 safetyPrefs?.isSpamSafelisted(event.pubkey) != true
             ) {
-                val noteCount = eventRepoRef?.getCachedEventsByAuthor(event.pubkey, 1, 10)?.size ?: 0
-                val cached = spamAuthorCache?.get(event.pubkey, noteCount)
-                if (cached != null && cached >= 0.7f) {
+                // Graph counts are in-memory lookups (no SQLite on the main thread).
+                val net = extendedNetworkRepoRef
+                val verdict = ReplyGate.networkVerdict(
+                    mutedBy = net?.mutedByFollowsCount(event.pubkey),
+                    followedBy = net?.followedByFollowsCount(event.pubkey),
+                    muteSignalEnabled = safetyPrefs?.muteSignalEnabled?.value == true,
+                    followSignalEnabled = safetyPrefs?.followSignalEnabled?.value == true
+                ) ?: if (spamClassifier != null) {
+                    val noteCount = eventRepoRef?.getCachedEventsByAuthor(event.pubkey, 1, 10)?.size ?: 0
+                    val cached = spamAuthorCache?.get(event.pubkey, noteCount)
+                    ReplyGate.decide(null, null, cached, muteSignalEnabled = false, followSignalEnabled = false)
+                } else ReplyGate.Verdict.KEEP
+                if (verdict == ReplyGate.Verdict.HIDE) {
                     spamEvents.add(event)
                     continue
                 }
-                if (cached == null && event.pubkey !in spamScoringPubkeys) {
+                if (verdict == ReplyGate.Verdict.ASK_MODEL && event.pubkey !in spamScoringPubkeys) {
                     pubkeysToScore.add(event.pubkey)
                 }
             }

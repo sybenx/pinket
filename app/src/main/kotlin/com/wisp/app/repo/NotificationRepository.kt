@@ -775,6 +775,8 @@ class NotificationRepository(
         if (safetyPrefs?.spamFilterEnabled?.value != true) return
         if (contactRepo?.isFollowing(event.pubkey) == true) return
         if (safetyPrefs?.isSpamSafelisted(event.pubkey) == true) return
+        // The follows graph already settles this author: no need to run the model.
+        if (networkVerdict(event.pubkey) != null) return
         // Only replies are spam-scored (see mergeReply); skip quotes/mentions
         if (event.tags.any { it.size >= 2 && it[0] == "q" }) return
         if (Nip10.getReplyTargetWithHint(event) == null) return
@@ -791,15 +793,31 @@ class NotificationRepository(
         if (score != null) cache.put(event.pubkey, score, inputs.size)
     }
 
+    /** Follows-graph part of [ReplyGate]; null when the model should decide. No SQLite. */
+    private fun networkVerdict(pubkey: String): ReplyGate.Verdict? {
+        val prefs = safetyPrefs ?: return null
+        val net = extendedNetworkRepo ?: return null
+        return ReplyGate.networkVerdict(
+            mutedBy = net.mutedByFollowsCount(pubkey),
+            followedBy = net.followedByFollowsCount(pubkey),
+            muteSignalEnabled = prefs.muteSignalEnabled.value,
+            followSignalEnabled = prefs.followSignalEnabled.value
+        )
+    }
+
     private fun mergeReply(event: NostrEvent, replyTarget: String, replyTargetHint: String?): Boolean {
         if (safetyPrefs?.spamFilterEnabled?.value == true &&
             contactRepo?.isFollowing(event.pubkey) != true &&
             safetyPrefs?.isSpamSafelisted(event.pubkey) != true
         ) {
-            // Score was computed off-lock in warmSpamScore; only consult the cache here
-            val noteCount = eventRepo?.getCachedEventsByAuthor(event.pubkey, 1, 10)?.size ?: 0
-            val cached = spamAuthorCache?.get(event.pubkey, noteCount)
-            if (cached != null && cached >= 0.7f) return false
+            // Graph counts are in-memory lookups; the model score was computed
+            // off-lock in warmSpamScore, so only consult the cache here.
+            val verdict = networkVerdict(event.pubkey) ?: run {
+                val noteCount = eventRepo?.getCachedEventsByAuthor(event.pubkey, 1, 10)?.size ?: 0
+                val cached = spamAuthorCache?.get(event.pubkey, noteCount)
+                ReplyGate.decide(null, null, cached, muteSignalEnabled = false, followSignalEnabled = false)
+            }
+            if (verdict == ReplyGate.Verdict.HIDE) return false
         }
         val key = "reply:${event.id}"
         val hints = listOfNotNull(replyTargetHint)

@@ -312,6 +312,10 @@ class EventRouter(
                 Log.d("EventRouter", "Routing kind 3 from sub=$subscriptionId pubkey=${event.pubkey.take(8)}")
                 extendedNetworkRepo.processFollowListEvent(event)
             }
+        } else if (subscriptionId == "extnet-mute") {
+            // Extended network discovery: follows' public mute lists. Collected
+            // directly by ExtendedNetworkRepository; never route into feeds.
+            Unit
         } else if (subscriptionId.startsWith("extnet-rl-")) {
             // Extended network discovery: relay lists — update relay list cache
             if (event.kind == 10002) relayListRepo.updateFromEvent(event)

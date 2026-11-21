@@ -39,6 +39,8 @@ fun SafetyFiltersTab(
 ) {
     val spamEnabled by safetyPrefs.spamFilterEnabled.collectAsState()
     val wotEnabled by safetyPrefs.wotFilterEnabled.collectAsState()
+    val muteSignalEnabled by safetyPrefs.muteSignalEnabled.collectAsState()
+    val followSignalEnabled by safetyPrefs.followSignalEnabled.collectAsState()
     val network by cachedNetwork.collectAsState()
 
     Column(
@@ -70,6 +72,23 @@ fun SafetyFiltersTab(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp)
+        )
+
+        Spacer(Modifier.height(12.dp))
+        SpamSubToggle(
+            title = stringResource(R.string.safety_mute_signal_title),
+            description = stringResource(R.string.safety_mute_signal_description),
+            checked = muteSignalEnabled,
+            enabled = spamEnabled,
+            onCheckedChange = { safetyPrefs.setMuteSignalEnabled(it) }
+        )
+        Spacer(Modifier.height(12.dp))
+        SpamSubToggle(
+            title = stringResource(R.string.safety_follow_signal_title),
+            description = stringResource(R.string.safety_follow_signal_description),
+            checked = followSignalEnabled,
+            enabled = spamEnabled,
+            onCheckedChange = { safetyPrefs.setFollowSignalEnabled(it) }
         )
 
         Spacer(Modifier.height(8.dp))
@@ -189,5 +208,45 @@ fun SafetyFiltersTab(
                 Text(stringResource(R.string.safety_wot_compute_now))
             }
         }
+    }
+}
+
+@Composable
+private fun SpamSubToggle(
+    title: String,
+    description: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    val titleColor = if (enabled) MaterialTheme.colorScheme.onSurface
+    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+    val descColor = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant
+    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = titleColor
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = descColor,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
+            colors = wispSwitchColors()
+        )
     }
 }

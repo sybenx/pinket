@@ -396,6 +396,30 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     val initialLoadDone: StateFlow<Boolean> = feedSub.initialLoadDone
+
+    // The reply signals (ReplyGate) need the follows' graph, which used to be built
+    // only from the Social Graph screen. Once per account per app start, after the
+    // initial feed load, build it in the background when it is missing or stale.
+    private val replySignalDiscoveryTried =
+        java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+
+    init {
+        viewModelScope.launch {
+            initialLoadDone.collect { done ->
+                if (!done) return@collect
+                val pk = getUserPubkey() ?: return@collect
+                if (!safetyPrefs.muteSignalEnabled.value && !safetyPrefs.followSignalEnabled.value) return@collect
+                if (!replySignalDiscoveryTried.add(pk)) return@collect
+                launch(Dispatchers.Default) {
+                    kotlinx.coroutines.delay(2_000)
+                    if (getUserPubkey() != pk) return@launch
+                    if (!extendedNetworkRepo.needsReplySignalRefresh()) return@launch
+                    Log.d("FeedVM", "Building follows graph for reply signals")
+                    extendedNetworkRepo.discoverNetwork()
+                }
+            }
+        }
+    }
     val initLoadingState: StateFlow<InitLoadingState> = feedSub.initLoadingState
     val feedType: StateFlow<FeedType> = feedSub.feedType
     val selectedRelay: StateFlow<String?> = feedSub.selectedRelay

@@ -17,7 +17,7 @@ class SocialGraphDb(private val context: Context, initialPubkeyHex: String? = nu
     }
 
     private class InternalHelper(ctx: Context, dbName: String) :
-        SQLiteOpenHelper(ctx, dbName, null, 1) {
+        SQLiteOpenHelper(ctx, dbName, null, 2) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL("""
                 CREATE TABLE followed_by (
@@ -27,8 +27,23 @@ class SocialGraphDb(private val context: Context, initialPubkeyHex: String? = nu
                 )
             """.trimIndent())
             db.execSQL("CREATE INDEX idx_followed_by_pubkey ON followed_by(pubkey)")
+            createMutedBy(db)
         }
-        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+            if (oldVersion < 2) createMutedBy(db)
+        }
+
+        /** Who among the user's follows has [pubkey] in their public mute list (kind 10000). */
+        private fun createMutedBy(db: SQLiteDatabase) {
+            db.execSQL("""
+                CREATE TABLE IF NOT EXISTS muted_by (
+                    pubkey TEXT NOT NULL,
+                    muter TEXT NOT NULL,
+                    PRIMARY KEY (pubkey, muter)
+                )
+            """.trimIndent())
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_muted_by_pubkey ON muted_by(pubkey)")
+        }
     }
 
     @Volatile private var helper: InternalHelper =
@@ -90,6 +105,52 @@ class SocialGraphDb(private val context: Context, initialPubkeyHex: String? = nu
         }
     }
 
+    /** Replace the whole muted_by table with [rows] (muted pubkey, muter) in one transaction. */
+    fun replaceMutedBy(rows: List<Pair<String, String>>) {
+        val db = helper.writableDatabase
+        db.beginTransaction()
+        try {
+            db.execSQL("DELETE FROM muted_by")
+            val stmt: SQLiteStatement =
+                db.compileStatement("INSERT OR IGNORE INTO muted_by (pubkey, muter) VALUES (?, ?)")
+            for ((pubkey, muter) in rows) {
+                stmt.bindString(1, pubkey)
+                stmt.bindString(2, muter)
+                stmt.executeInsert()
+                stmt.clearBindings()
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun getMutedByCount(pubkey: String): Int {
+        helper.readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM muted_by WHERE pubkey = ?", arrayOf(pubkey)
+        ).use { cursor -> return if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+    }
+
+    /** pubkey -> follower count, only for pubkeys with at least [minCount] rows. */
+    fun getFollowerCountsAtLeast(minCount: Int): Map<String, Int> =
+        countsAtLeast("followed_by", minCount)
+
+    /** pubkey -> muted-by count, only for pubkeys with at least [minCount] rows. */
+    fun getMutedByCountsAtLeast(minCount: Int): Map<String, Int> =
+        countsAtLeast("muted_by", minCount)
+
+    private fun countsAtLeast(table: String, minCount: Int): Map<String, Int> {
+        val result = HashMap<String, Int>()
+        helper.readableDatabase.rawQuery(
+            // minCount is inlined: a bound arg would be TEXT and never compare >= an integer.
+            "SELECT pubkey, COUNT(*) AS cnt FROM $table GROUP BY pubkey HAVING cnt >= ${minCount.toInt()}",
+            null
+        ).use { cursor ->
+            while (cursor.moveToNext()) result[cursor.getString(0)] = cursor.getInt(1)
+        }
+        return result
+    }
+
     fun getFollowers(pubkey: String): List<String> {
         val result = mutableListOf<String>()
         helper.readableDatabase.rawQuery(
@@ -124,6 +185,7 @@ class SocialGraphDb(private val context: Context, initialPubkeyHex: String? = nu
     fun clearAll() {
         try {
             helper.writableDatabase.execSQL("DELETE FROM followed_by")
+            helper.writableDatabase.execSQL("DELETE FROM muted_by")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to clear social graph", e)
         }

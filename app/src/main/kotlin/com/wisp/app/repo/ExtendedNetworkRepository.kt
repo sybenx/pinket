@@ -11,7 +11,9 @@ import com.wisp.app.relay.RelayConfig
 import com.wisp.app.relay.RelayPool
 import com.wisp.app.relay.RelayScoreBoard
 import com.wisp.app.relay.SubscriptionManager
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -79,11 +81,28 @@ class ExtendedNetworkRepository(
     @Volatile private var discoveryTotal = 0
     @Volatile private var discoveryInProgress = false
 
+    // Newest public mute list (kind 10000) per follow, collected during discovery.
+    private val pendingMuteLists = java.util.concurrent.ConcurrentHashMap<String, NostrEvent>()
+
+    // In-memory reply signal counts (see ReplyGate). Null = not known yet (fail open).
+    // Only counts >= the ReplyGate thresholds are kept: a smaller value gives the
+    // same decision as 0, so absent pubkeys read as 0.
+    @Volatile private var followedByTable: PubkeyCountTable? = null
+    @Volatile private var mutedByTable: PubkeyCountTable? = null
+    @Volatile private var signalsGeneration = 0
+    private val signalsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private val _replySignalsVersion = MutableStateFlow(0)
+    /** Bumped whenever the reply signal counts are (re)loaded. */
+    val replySignalsVersion: StateFlow<Int> = _replySignalsVersion
+
 
     companion object {
         private const val TAG = "ExtendedNetworkRepo"
         private const val THRESHOLD = 10
         private const val FOLLOW_LIST_TIMEOUT_MS = 5_000L
+        private const val MUTE_LIST_SUB_ID = "extnet-mute"
+        private const val KEY_MUTES_FETCHED_AT = "mutes_fetched_at"
         private const val RELAY_LIST_CHUNK_SIZE = 500
         private const val RELAY_LIST_TIMEOUT_MS = 8_000L
         private const val MAX_EXTENDED_RELAYS = 100
@@ -100,6 +119,56 @@ class ExtendedNetworkRepository(
 
     init {
         loadFromPrefs()
+        loadReplySignalsAsync()
+    }
+
+    /**
+     * How many of the user's follows follow [pubkey], or null when the graph is
+     * not known yet. Values below [ReplyGate.MIN_FOLLOWED_BY] read as 0.
+     * In-memory binary search: safe on the main thread and inside locks.
+     */
+    fun followedByFollowsCount(pubkey: String): Int? = followedByTable?.get(pubkey)
+
+    /**
+     * How many of the user's follows publicly mute [pubkey], or null when not
+     * known yet. Values below [ReplyGate.MIN_MUTED_BY] read as 0.
+     */
+    fun mutedByFollowsCount(pubkey: String): Int? = mutedByTable?.get(pubkey)
+
+    /** True when discovery should run in the background to feed the reply signals. */
+    fun needsReplySignalRefresh(): Boolean {
+        if (discoveryInProgress) return false
+        if (prefs.getLong(KEY_MUTES_FETCHED_AT, 0L) <= 0L) return true
+        val cache = _cachedNetwork.value ?: return true
+        return isCacheStale(cache)
+    }
+
+    private fun loadReplySignalsAsync() {
+        val gen = ++signalsGeneration
+        signalsScope.launch {
+            try {
+                loadReplySignals(gen)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load reply signals", e)
+            }
+        }
+    }
+
+    /** Reads the counts from SQLite (call off the main thread) and swaps them in. */
+    private fun loadReplySignals(gen: Int) {
+        val mutesFetched = prefs.getLong(KEY_MUTES_FETCHED_AT, 0L) > 0L
+        val graphKnown = mutesFetched || _cachedNetwork.value != null
+        val followed = if (graphKnown) {
+            PubkeyCountTable.from(socialGraphDb.getFollowerCountsAtLeast(ReplyGate.MIN_FOLLOWED_BY))
+        } else null
+        val muted = if (mutesFetched) {
+            PubkeyCountTable.from(socialGraphDb.getMutedByCountsAtLeast(ReplyGate.MIN_MUTED_BY))
+        } else null
+        if (gen != signalsGeneration) return
+        followedByTable = followed
+        mutedByTable = muted
+        _replySignalsVersion.value = _replySignalsVersion.value + 1
+        Log.d(TAG, "Reply signals loaded: followedBy>=3 ${followed?.size}, mutedBy>=3 ${muted?.size}")
     }
 
     fun processFollowListEvent(event: NostrEvent) {
@@ -162,6 +231,7 @@ class ExtendedNetworkRepository(
 
             val firstDegreeSet = firstDegree.toSet()
             pendingFollowLists.clear()
+            pendingMuteLists.clear()
             discoveryTotal = firstDegree.size
 
             // Step 1: Fetch kind 3 events for all follows using scoreboard routing, 3s timeout.
@@ -176,6 +246,12 @@ class ExtendedNetworkRepository(
             val allFilters = chunks.map { chunk -> Filter(kinds = listOf(3), authors = chunk) }
             val msg = if (allFilters.size == 1) ClientMessage.req(subId, allFilters[0])
             else ClientMessage.req(subId, allFilters)
+            // Public mute lists of the same follows, same chunks, same relays.
+            val muteFilters = chunks.map { chunk ->
+                Filter(kinds = listOf(NetworkMuteSignals.KIND_MUTE_LIST), authors = chunk)
+            }
+            val muteMsg = if (muteFilters.size == 1) ClientMessage.req(MUTE_LIST_SUB_ID, muteFilters[0])
+            else ClientMessage.req(MUTE_LIST_SUB_ID, muteFilters)
 
             // Collect discovery events directly from the relay pool, bypassing the main
             // event processing pipeline. The main pipeline processes events sequentially
@@ -191,14 +267,27 @@ class ExtendedNetworkRepository(
                                 fetched = pendingFollowLists.size,
                                 total = firstDegree.size
                             )
+                        } else if (relayEvent.subscriptionId == MUTE_LIST_SUB_ID &&
+                            relayEvent.event.kind == NetworkMuteSignals.KIND_MUTE_LIST &&
+                            relayEvent.event.pubkey in firstDegreeSet
+                        ) {
+                            val ev = relayEvent.event
+                            pendingMuteLists.compute(ev.pubkey) { _, cur ->
+                                if (NetworkMuteSignals.isNewer(ev, cur)) ev else cur
+                            }
                         }
                     }
                 }
 
                 val sentCount = relayPool.sendToTopRelays(msg, maxRelays = 15)
+                val muteSentCount = relayPool.sendToTopRelays(muteMsg, maxRelays = 15)
                 val eoseDeferred = async {
                     subManager.awaitEoseCount(subId, sentCount, FOLLOW_LIST_TIMEOUT_MS)
                 }
+                val muteEoseDeferred = async {
+                    subManager.awaitEoseCount(MUTE_LIST_SUB_ID, muteSentCount, FOLLOW_LIST_TIMEOUT_MS)
+                }
+                val muteStart = System.currentTimeMillis()
                 var lastFetched = 0
                 var lastChangeTime = System.currentTimeMillis()
                 val deadline = System.currentTimeMillis() + FOLLOW_LIST_TIMEOUT_MS
@@ -223,10 +312,27 @@ class ExtendedNetworkRepository(
                     }
                     kotlinx.coroutines.delay(200)
                 }
+                // Mute lists: keep collecting until their EOSE, a 1.5s stall, or the
+                // same overall timeout, whichever comes first.
+                var muteLast = pendingMuteLists.size
+                var muteLastChange = System.currentTimeMillis()
+                val muteDeadline = muteStart + FOLLOW_LIST_TIMEOUT_MS
+                while (System.currentTimeMillis() < muteDeadline && !muteEoseDeferred.isCompleted) {
+                    val n = pendingMuteLists.size
+                    if (n != muteLast) {
+                        muteLast = n
+                        muteLastChange = System.currentTimeMillis()
+                    }
+                    if (n > 0 && System.currentTimeMillis() - muteLastChange > 1_500) break
+                    kotlinx.coroutines.delay(200)
+                }
                 eoseDeferred.cancel()
+                muteEoseDeferred.cancel()
                 collectorJob.cancel()
             }
             subManager.closeSubscription(subId)
+            subManager.closeSubscription(MUTE_LIST_SUB_ID)
+            Log.d(TAG, "Fetched ${pendingMuteLists.size} public mute lists from ${firstDegree.size} follows")
             discoveryTotal = 0
 
             Log.d(TAG, "Fetched ${pendingFollowLists.size} follow lists from ${firstDegree.size} follows")
@@ -273,6 +379,21 @@ class ExtendedNetworkRepository(
                 counts
             }
             _discoveryState.value = DiscoveryState.BuildingGraph(followCount, followCount)
+
+            // Muted-by rows from the follows' public mute lists, then refresh the
+            // in-memory reply signal counts (before any early return below).
+            withContext(Dispatchers.IO) {
+                val muteRows = NetworkMuteSignals.mutedByRows(HashMap(pendingMuteLists))
+                socialGraphDb.replaceMutedBy(muteRows)
+                // A pass that got no follow lists (offline) does not count as fetched,
+                // so the next app start tries again.
+                if (pendingFollowLists.isNotEmpty()) {
+                    prefs.edit().putLong(KEY_MUTES_FETCHED_AT, System.currentTimeMillis() / 1000).apply()
+                }
+                Log.d(TAG, "Social graph: inserted ${muteRows.size} mutedBy rows")
+                pendingMuteLists.clear()
+                loadReplySignals(++signalsGeneration)
+            }
 
             _discoveryState.value = DiscoveryState.ComputingNetwork(secondDegreeCount.size)
             Log.d(TAG, "Social graph: inserted $totalDbRows followedBy rows, ${secondDegreeCount.size} unique 2nd-degree follows")
@@ -518,6 +639,10 @@ class ExtendedNetworkRepository(
         _cachedNetwork.value = null
         _discoveryState.value = DiscoveryState.Idle
         pendingFollowLists.clear()
+        pendingMuteLists.clear()
+        signalsGeneration++
+        followedByTable = null
+        mutedByTable = null
         discoveryTotal = 0
     }
 
@@ -527,6 +652,7 @@ class ExtendedNetworkRepository(
         prefs = context.getSharedPreferences(prefsName(pubkeyHex), Context.MODE_PRIVATE)
         socialGraphDb.reload(pubkeyHex)
         loadFromPrefs()
+        loadReplySignalsAsync()
     }
 
     private fun saveToPrefs(cache: ExtendedNetworkCache) {
