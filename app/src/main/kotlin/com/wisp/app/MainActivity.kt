@@ -38,6 +38,7 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        InterfacePreferences(this).migrateBrand()
         NsecPasteGuard.setActivity(this)
         enableEdgeToEdge()
         deepLinkUri.value = intent?.data?.toString()

@@ -81,6 +81,7 @@ import com.wisp.app.repo.FiatPreferences
 import com.wisp.app.repo.ZapPreferences
 import com.wisp.app.repo.ZapPreset
 import com.wisp.app.ui.theme.WispThemeColors
+import com.wisp.app.ui.theme.inkOrWhite
 import com.wisp.app.ui.util.AmountFormatter
 import kotlinx.coroutines.launch
 
@@ -150,6 +151,7 @@ fun ZapDialog(
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     val accent = WispThemeColors.zapColor
+    val onAccent = inkOrWhite(accent)
 
     val fiatPrefs = remember { FiatPreferences.get(context) }
     val fiatMode by fiatPrefs.fiatMode.collectAsState()
@@ -588,7 +590,7 @@ fun ZapDialog(
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = accent,
-                        contentColor = Color.White,
+                        contentColor = onAccent,
                         disabledContainerColor = accent.copy(alpha = 0.35f)
                     )
                 ) {
@@ -698,6 +700,7 @@ private fun PresetPill(
     accent: Color,
     onClick: () -> Unit
 ) {
+    val onAccent = inkOrWhite(accent)
     Surface(
         modifier = Modifier.clickable(onClick = onClick),
         shape = CircleShape,
@@ -707,7 +710,7 @@ private fun PresetPill(
             label,
             style = MaterialTheme.typography.labelLarge,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) Color.White else MaterialTheme.colorScheme.onSurface,
+            color = if (selected) onAccent else MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp)
         )
     }
@@ -724,6 +727,7 @@ private fun CustomPlusPill(
     onClick: () -> Unit,
     onPlusClick: () -> Unit
 ) {
+    val onAccent = inkOrWhite(accent)
     Surface(
         modifier = Modifier.clickable(onClick = onClick),
         shape = CircleShape,
@@ -737,7 +741,7 @@ private fun CustomPlusPill(
                 label,
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (selected) Color.White else MaterialTheme.colorScheme.onSurface
+                color = if (selected) onAccent else MaterialTheme.colorScheme.onSurface
             )
             if (showPlus) {
                 Spacer(Modifier.width(6.dp))
@@ -745,14 +749,14 @@ private fun CustomPlusPill(
                     modifier = Modifier
                         .size(22.dp)
                         .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.18f))
+                        .background(onAccent.copy(alpha = 0.18f))
                         .clickable(onClick = onPlusClick),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         Icons.Filled.Add,
                         contentDescription = "Save as preset",
-                        tint = Color.White,
+                        tint = onAccent,
                         modifier = Modifier.size(14.dp)
                     )
                 }
@@ -841,7 +845,10 @@ private fun SaveZapPresetDialog(
                     onSave(ZapPreset(sats, presetMessage.trim()))
                 },
                 enabled = (amount.toLongOrNull() ?: 0L) > 0,
-                colors = ButtonDefaults.buttonColors(containerColor = WispThemeColors.zapColor)
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = WispThemeColors.zapColor,
+                    contentColor = inkOrWhite(WispThemeColors.zapColor)
+                )
             ) {
                 Text(stringResource(R.string.btn_save), fontWeight = FontWeight.Bold)
             }

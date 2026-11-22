@@ -171,7 +171,7 @@ fun ActionBar(
             Text(
                 text = likeCount.toString(),
                 style = MaterialTheme.typography.labelSmall,
-                color = if (userReactionEmojis.isNotEmpty()) WispThemeColors.zapColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (userReactionEmojis.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1
             )
         }

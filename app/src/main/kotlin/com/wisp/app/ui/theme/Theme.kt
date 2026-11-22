@@ -3,13 +3,13 @@ package com.wisp.app.ui.theme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SwitchColors
 import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -22,7 +22,8 @@ val LocalWispColors = androidx.compose.runtime.staticCompositionLocalOf {
         zapColor = Color.Unspecified,
         repostColor = Color.Unspecified,
         bookmarkColor = Color.Unspecified,
-        paidColor = Color.Unspecified
+        paidColor = Color.Unspecified,
+        signatureBrush = SolidColor(Color.Unspecified)
     )
 }
 
@@ -31,7 +32,9 @@ data class WispColors(
     val zapColor: Color,
     val repostColor: Color,
     val bookmarkColor: Color,
-    val paidColor: Color
+    val paidColor: Color,
+    /** Opal gradient on the pinket theme, solid primary on every other theme. */
+    val signatureBrush: Brush
 )
 
 object WispThemeColors {
@@ -40,14 +43,27 @@ object WispThemeColors {
     val repostColor: Color @Composable get() = LocalWispColors.current.repostColor
     val bookmarkColor: Color @Composable get() = LocalWispColors.current.bookmarkColor
     val paidColor: Color @Composable get() = LocalWispColors.current.paidColor
+    val signatureBrush: Brush @Composable get() = LocalWispColors.current.signatureBrush
 }
 
 @Composable
-fun wispSwitchColors(): SwitchColors = SwitchDefaults.colors(
-    uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
-    uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-    uncheckedBorderColor = MaterialTheme.colorScheme.outline
-)
+fun wispSwitchColors(): SwitchColors {
+    val scheme = MaterialTheme.colorScheme
+    val thumb = if (ColorUtils.calculateContrast(Color.White.toArgb(), scheme.primary.copy(alpha = 1f).toArgb()) >= 2.0) {
+        Color.White
+    } else {
+        scheme.onPrimary
+    }
+    return SwitchDefaults.colors(
+        checkedThumbColor = thumb,
+        checkedTrackColor = scheme.primary,
+        checkedBorderColor = Color.Transparent,
+        checkedIconColor = scheme.primary,
+        uncheckedThumbColor = scheme.onSurfaceVariant,
+        uncheckedTrackColor = scheme.surfaceVariant,
+        uncheckedBorderColor = scheme.outline
+    )
+}
 
 private val WispTypography = Typography(
     titleLarge = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold),
@@ -67,159 +83,53 @@ private val WispTypographyLarge = Typography(
     labelSmall = TextStyle(fontSize = 13.sp)
 )
 
-private fun lightenColor(color: Color, fraction: Float = 0.3f): Color {
-    val hsl = FloatArray(3)
-    ColorUtils.colorToHSL(color.toArgb(), hsl)
-    hsl[1] = (hsl[1] * 0.7f).coerceIn(0f, 1f)
-    hsl[2] = (hsl[2] + (1f - hsl[2]) * fraction).coerceIn(0f, 1f)
-    return Color(ColorUtils.HSLToColor(hsl))
-}
-
-private fun darkenColor(color: Color, fraction: Float = 0.6f): Color {
-    val hsl = FloatArray(3)
-    ColorUtils.colorToHSL(color.toArgb(), hsl)
-    hsl[2] = (hsl[2] * (1f - fraction)).coerceIn(0f, 1f)
-    return Color(ColorUtils.HSLToColor(hsl))
-}
-
 @Composable
 fun WispTheme(
     isDarkTheme: Boolean = true,
-    accentColor: Color = Color(0xFFFF9800),
+    accentColor: Color = Color(0xFFFF6B5E),
     isLargeText: Boolean = false,
     themeName: String = "custom",
     content: @Composable () -> Unit
 ) {
-    val themePreset = remember(themeName) { Themes.getTheme(themeName) }
-    val isCustomTheme = themeName == "custom"
-
-    val primary = if (isCustomTheme) accentColor else themePreset.dark.primary
-    val secondary = remember(primary) { lightenColor(primary) }
-    val primaryContainerDark = remember(primary) { darkenColor(primary, 0.6f) }
-    val primaryContainerLight = remember(primary) { lightenColor(primary, 0.7f) }
-
-    // iOS systemRed (#FF3B30) for destructive / error UI. Material 3's
-    // default `error` renders pinkish in dark mode (`#F2B8B5`) and a
-    // muted brick red in light mode (`#B3261E`); both read "off" next
-    // to the iOS counterpart. Setting `error` explicitly propagates to
-    // every `MaterialTheme.colorScheme.error` consumer (logout, alerts,
-    // destructive labels).
-    val iosRed = Color(0xFFFF3B30)
-    val colorScheme = if (isDarkTheme) {
-        if (isCustomTheme) {
-            darkColorScheme(
-                primary = accentColor,
-                onPrimary = Color.White,
-                primaryContainer = primaryContainerDark,
-                onPrimaryContainer = lightenColor(accentColor, 0.5f),
-                secondary = secondary,
-                background = Color(0xFF0A0A0B),
-                surface = Color(0xFF1C1C1E),
-                surfaceVariant = Color(0xFF2C2C2E),
-                onBackground = Color(0xFFE0E0E0),
-                onSurface = Color(0xFFE0E0E0),
-                onSurfaceVariant = Color(0xFF9998A0),
-                outline = Color(0xFF38383A),
-                error = iosRed,
-                onError = Color.White
-            )
-        } else {
-            val colors = themePreset.dark
-            val presetContainerDark = remember(colors.primary) { darkenColor(colors.primary, 0.6f) }
-            darkColorScheme(
-                primary = colors.primary,
-                onPrimary = Color.White,
-                primaryContainer = presetContainerDark,
-                onPrimaryContainer = lightenColor(colors.primary, 0.5f),
-                secondary = colors.secondary,
-                background = colors.background,
-                surface = colors.surface,
-                surfaceVariant = colors.surfaceVariant,
-                onBackground = colors.onBackground,
-                onSurface = colors.onSurface,
-                onSurfaceVariant = colors.onSurfaceVariant,
-                outline = colors.outline,
-                error = iosRed,
-                onError = Color.White
-            )
-        }
-    } else {
-        if (isCustomTheme) {
-            lightColorScheme(
-                primary = accentColor,
-                onPrimary = Color.White,
-                primaryContainer = primaryContainerLight,
-                onPrimaryContainer = darkenColor(accentColor, 0.4f),
-                secondary = secondary,
-                background = Color(0xFFECECEC),
-                surface = Color(0xFFF5F5F5),
-                surfaceVariant = Color(0xFFE0E0E0),
-                onBackground = Color(0xFF1C1B1F),
-                onSurface = Color(0xFF1C1B1F),
-                onSurfaceVariant = Color(0xFF6B6B6B),
-                outline = Color(0xFFCCCCCC),
-                error = iosRed,
-                onError = Color.White
-            )
-        } else {
-            val colors = themePreset.light
-            val presetContainerLight = remember(colors.primary) { lightenColor(colors.primary, 0.7f) }
-            lightColorScheme(
-                primary = colors.primary,
-                onPrimary = Color.White,
-                primaryContainer = presetContainerLight,
-                onPrimaryContainer = darkenColor(colors.primary, 0.4f),
-                secondary = colors.secondary,
-                background = colors.background,
-                surface = colors.surface,
-                surfaceVariant = colors.surfaceVariant,
-                onBackground = colors.onBackground,
-                onSurface = colors.onSurface,
-                onSurfaceVariant = colors.onSurfaceVariant,
-                outline = colors.outline,
-                error = iosRed,
-                onError = Color.White
-            )
+    // "custom" is the neutral gray base with the user's accent; every other
+    // preset derives a full 36-role scheme from its own colors, so nothing
+    // falls back to the M3 baseline. Unknown names resolve to custom.
+    val preset = remember(themeName) { Themes.getTheme(themeName) }
+    val colorScheme = remember(preset, isDarkTheme, accentColor) {
+        when (preset.name) {
+            "custom" -> customScheme(accentColor, isDarkTheme)
+            else -> {
+                if (isDarkTheme) {
+                    deriveScheme(preset.dark, dark = true, otherModePrimary = preset.light.primary)
+                } else {
+                    deriveScheme(preset.light, dark = false, otherModePrimary = preset.dark.primary)
+                }
+            }
         }
     }
 
-    val wispColors = if (isDarkTheme) {
-        if (isCustomTheme) {
-            WispColors(
-                backgroundColor = Color(0xFF0A0A0B),
-                zapColor = accentColor,
-                repostColor = Color(0xFF4CAF50),
-                bookmarkColor = accentColor,
-                paidColor = Color(0xFFFFD54F)
+    val wispColors = remember(preset, isDarkTheme, colorScheme) {
+        val pinket = if (isDarkTheme) PinketWispDark else PinketWispLight
+        when (preset.name) {
+            // Zap and bookmark follow the accent, repost is green.
+            "custom" -> pinket.copy(
+                zapColor = colorScheme.primary,
+                repostColor = if (isDarkTheme) Color(0xFF4CAF50) else Color(0xFF2E7D32),
+                bookmarkColor = colorScheme.primary,
+                paidColor = if (isDarkTheme) Color(0xFFFFD54F) else Color(0xFFC9A000),
+                signatureBrush = SolidColor(colorScheme.primary)
             )
-        } else {
-            val colors = themePreset.dark
-            WispColors(
-                backgroundColor = colors.background,
-                zapColor = colors.zapColor,
-                repostColor = colors.repostColor,
-                bookmarkColor = colors.bookmarkColor,
-                paidColor = colors.paidColor
-            )
-        }
-    } else {
-        if (isCustomTheme) {
-            WispColors(
-                backgroundColor = Color(0xFFECECEC),
-                zapColor = Color(0xFFB85C00),
-                repostColor = Color(0xFF2E7D32),
-                bookmarkColor = Color(0xFFB85C00),
-                paidColor = Color(0xFFC9A000)
-            )
-        } else {
-            val colors = themePreset.light
-            WispColors(
-                backgroundColor = colors.background,
-                zapColor = colors.zapColor,
-                repostColor = colors.repostColor,
-                bookmarkColor = colors.bookmarkColor,
-                paidColor = colors.paidColor
-            )
+            else -> {
+                val colors = if (isDarkTheme) preset.dark else preset.light
+                WispColors(
+                    backgroundColor = colors.background,
+                    zapColor = colors.zapColor,
+                    repostColor = colors.repostColor,
+                    bookmarkColor = colors.bookmarkColor,
+                    paidColor = colors.paidColor,
+                    signatureBrush = SolidColor(colorScheme.primary)
+                )
+            }
         }
     }
 

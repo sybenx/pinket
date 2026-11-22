@@ -574,13 +574,13 @@ private fun SearchTab(
                 icon,
                 contentDescription = null,
                 modifier = Modifier.size(18.dp),
-                tint = if (selected) Color.White else MaterialTheme.colorScheme.onSurface
+                tint = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
             )
             Spacer(Modifier.width(6.dp))
             Text(
                 label,
                 style = MaterialTheme.typography.labelLarge,
-                color = if (selected) Color.White else MaterialTheme.colorScheme.onSurface,
+                color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
             )
         }

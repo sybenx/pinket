@@ -735,7 +735,7 @@ private fun ZenNotificationRow(
                             imageVector = Icons.Outlined.VisibilityOff,
                             contentDescription = "Private",
                             modifier = Modifier.size(14.dp),
-                            tint = androidx.compose.ui.graphics.Color(0xFFFF8C00)
+                            tint = MaterialTheme.colorScheme.primary
                         )
                     }
                 }

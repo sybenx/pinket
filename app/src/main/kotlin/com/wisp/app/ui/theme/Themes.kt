@@ -4,38 +4,40 @@ import androidx.compose.ui.graphics.Color
 
 object Themes {
     val themes = listOf(
+        // Swatch values only: Theme.kt builds the custom scheme from Pinket
+        // plus the stored accent.
         ThemePreset(
             name = "custom",
             displayName = "Custom",
             dark = ThemeColors(
-                primary = Color(0xFFFF9800),
-                secondary = Color(0xFFFFB74D),
-                background = Color(0xFF0A0A0B),
-                surface = Color(0xFF1C1C1E),
-                surfaceVariant = Color(0xFF2C2C2E),
-                onBackground = Color(0xFFE0E0E0),
-                onSurface = Color(0xFFE0E0E0),
-                onSurfaceVariant = Color(0xFF9998A0),
-                outline = Color(0xFF38383A),
-                zapColor = Color(0xFFFF9800),
-                repostColor = Color(0xFF4CAF50),
-                bookmarkColor = Color(0xFFFF9800),
-                paidColor = Color(0xFFFFD54F)
+                primary = Color(0xFFFF6B5E),
+                secondary = Color(0xFFFF9C92),
+                background = Color(0xFF0A0A0A),
+                surface = Color(0xFF1C1C1C),
+                surfaceVariant = Color(0xFF262626),
+                onBackground = Color(0xFFE6E6E6),
+                onSurface = Color(0xFFE6E6E6),
+                onSurfaceVariant = Color(0xFF9A9A9A),
+                outline = Color(0xFF383838),
+                zapColor = Color(0xFFFF8A3D),
+                repostColor = Color(0xFF2ED3C6),
+                bookmarkColor = Color(0xFFFF6B5E),
+                paidColor = Color(0xFFFFC36A)
             ),
             light = ThemeColors(
-                primary = Color(0xFFCC7000),
-                secondary = Color(0xFFFFB74D),
-                background = Color(0xFFD8D8D8),
-                surface = Color(0xFFE8E8E8),
-                surfaceVariant = Color(0xFFCDCDCD),
-                onBackground = Color(0xFF1C1B1F),
-                onSurface = Color(0xFF1C1B1F),
-                onSurfaceVariant = Color(0xFF333333),
-                outline = Color(0xFF999999),
-                zapColor = Color(0xFFB85C00),
-                repostColor = Color(0xFF2E7D32),
-                bookmarkColor = Color(0xFFB85C00),
-                paidColor = Color(0xFFC9A000)
+                primary = Color(0xFFC0392B),
+                secondary = Color(0xFFFF9C92),
+                background = Color(0xFFECECEC),
+                surface = Color(0xFFF5F5F5),
+                surfaceVariant = Color(0xFFE0E0E0),
+                onBackground = Color(0xFF1C1C1C),
+                onSurface = Color(0xFF1C1C1C),
+                onSurfaceVariant = Color(0xFF616161),
+                outline = Color(0xFFCCCCCC),
+                zapColor = Color(0xFFA84B0C),
+                repostColor = Color(0xFF00756B),
+                bookmarkColor = Color(0xFFC0392B),
+                paidColor = Color(0xFF8A6100)
             )
         ),
         ThemePreset(

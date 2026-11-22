@@ -651,7 +651,7 @@ private fun SpamToggle(count: Int, expanded: Boolean, onToggle: () -> Unit) {
                 text = if (expanded) stringResource(R.string.thread_tap_to_hide)
                 else stringResource(R.string.thread_tap_to_show),
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f)
+                color = MaterialTheme.colorScheme.onErrorContainer
             )
         }
     }

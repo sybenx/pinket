@@ -307,6 +307,7 @@ fun InterfaceScreen(
                             theme = theme,
                             isSelected = selectedTheme == theme.name,
                             isDark = true,
+                            primaryOverride = if (theme.name == "custom") currentColor else null,
                             onClick = {
                                 selectedTheme = theme.name
                                 isCustomTheme = theme.name == "custom"
@@ -1225,9 +1226,11 @@ private fun ThemeCard(
     theme: ThemePreset,
     isSelected: Boolean,
     isDark: Boolean,
+    primaryOverride: Color? = null,
     onClick: () -> Unit
 ) {
     val colors = if (isDark) theme.dark else theme.light
+    val primarySwatch = primaryOverride ?: colors.primary
 
     Card(
         modifier = Modifier
@@ -1259,7 +1262,7 @@ private fun ThemeCard(
                 Box(
                     modifier = Modifier
                         .size(24.dp)
-                        .background(colors.primary, RoundedCornerShape(4.dp))
+                        .background(primarySwatch, RoundedCornerShape(4.dp))
                 )
                 Box(
                     modifier = Modifier

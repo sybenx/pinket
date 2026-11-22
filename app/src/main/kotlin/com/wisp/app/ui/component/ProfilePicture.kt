@@ -94,7 +94,7 @@ private fun HighlightedProfilePicture(
         label = "glow"
     )
 
-    val orange = WispThemeColors.bookmarkColor
+    val glow = WispThemeColors.bookmarkColor
     val glowSpread = (size * 0.2f).coerceIn(5f, 10f)
 
     Box(
@@ -106,8 +106,8 @@ private fun HighlightedProfilePicture(
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            orange.copy(alpha = glowAlpha * 0.8f),
-                            orange.copy(alpha = glowAlpha * 0.3f),
+                            glow.copy(alpha = glowAlpha * 0.8f),
+                            glow.copy(alpha = glowAlpha * 0.3f),
                             Color.Transparent
                         ),
                         center = center,

@@ -197,7 +197,7 @@ fun ZapRow(
                         painter = androidx.compose.ui.res.painterResource(com.wisp.app.R.drawable.ic_private_zap),
                         contentDescription = "Private zap",
                         modifier = Modifier.size(16.dp),
-                        tint = Color(0xFFFF8C00)
+                        tint = WispThemeColors.zapColor
                     )
                     Spacer(Modifier.width(2.dp))
                 }
@@ -206,14 +206,14 @@ fun ZapRow(
                         if (com.wisp.app.ui.util.isFiatMode()) R.drawable.ic_coin_stack else R.drawable.ic_bolt
                     ),
                     contentDescription = null,
-                    tint = Color(0xFFFF8C00),
+                    tint = WispThemeColors.zapColor,
                     modifier = Modifier.size(14.dp)
                 )
                 Spacer(Modifier.width(2.dp))
                 Text(
                     text = AmountFormatter.formatFull(sats, LocalContext.current),
                     style = MaterialTheme.typography.labelLarge,
-                    color = Color(0xFFFF8C00),
+                    color = WispThemeColors.zapColor,
                     maxLines = 1
                 )
             }

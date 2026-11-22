@@ -156,6 +156,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import com.wisp.app.ui.theme.WispThemeColors
+import com.wisp.app.ui.theme.inkOrWhite
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -602,6 +603,7 @@ private fun WalletConnectionContent(
     // ecosystem links live on a separate discovery surface; this screen
     // is purely "paste your string and connect."
     val accent = WispThemeColors.zapColor
+    val onAccent = inkOrWhite(accent)
 
     Spacer(Modifier.height(12.dp))
     Row(
@@ -715,7 +717,7 @@ private fun WalletConnectionContent(
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = accent,
-                        contentColor = Color.White
+                        contentColor = onAccent
                     )
                 ) {
                     Text(
@@ -1335,7 +1337,7 @@ private fun WalletActionButton(
                 icon,
                 contentDescription = label,
                 modifier = Modifier.size(28.dp),
-                tint = Color.White
+                tint = inkOrWhite(tint)
             )
         }
         Spacer(Modifier.height(6.dp))
@@ -1398,6 +1400,7 @@ private fun SendInputContent(
     }
 
     val accent = WispThemeColors.zapColor
+    val onAccent = inkOrWhite(accent)
     val fieldShape = RoundedCornerShape(14.dp)
     val fieldBg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
     val hint = stringResource(R.string.wallet_lightning_address_invoice)
@@ -1502,7 +1505,7 @@ private fun SendInputContent(
             enabled = input.isNotBlank(),
             colors = ButtonDefaults.buttonColors(
                 containerColor = accent,
-                contentColor = Color.White,
+                contentColor = onAccent,
                 disabledContainerColor = fieldBg,
                 disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -2152,7 +2155,7 @@ private fun ReceiveAmountContent(
                 shape = fieldShape,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = Color.White,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
                     disabledContainerColor = fieldBg,
                     disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -3005,11 +3008,12 @@ private fun WalletModeRow(
     highlighted: Boolean = false
 ) {
     val accent = WispThemeColors.zapColor
+    val onAccent = inkOrWhite(accent)
     val shape = RoundedCornerShape(14.dp)
     val containerColor = if (highlighted) accent else MaterialTheme.colorScheme.surfaceVariant
-    val titleColor = if (highlighted) Color.White else MaterialTheme.colorScheme.onSurface
-    val subtitleColor = if (highlighted) Color.White.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant
-    val arrowColor = if (highlighted) Color.White.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant
+    val titleColor = if (highlighted) onAccent else MaterialTheme.colorScheme.onSurface
+    val subtitleColor = if (highlighted) onAccent.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant
+    val arrowColor = if (highlighted) onAccent.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant
     // Layered shadows produce the iOS soft-glow halo: wide outer bleed +
     // tighter inner glow, both tinted with the accent. Colored shadows
     // only honor `ambientColor`/`spotColor` on API 28+; below that the

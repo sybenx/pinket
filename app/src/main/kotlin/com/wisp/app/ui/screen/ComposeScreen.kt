@@ -12,6 +12,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -834,7 +835,7 @@ fun ComposeScreen(
                                 Icon(
                                     imageVector = Icons.Outlined.VisibilityOff,
                                     contentDescription = "Private reply",
-                                    tint = if (privateReply) androidx.compose.ui.graphics.Color(0xFFFF8C00)
+                                    tint = if (privateReply) MaterialTheme.colorScheme.primary
                                            else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -972,6 +973,7 @@ fun ComposeScreen(
                                                else Color.Transparent,
                                         contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
                                                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
                                         modifier = Modifier
                                             .weight(1f)
                                             .clickable { if (!selected) viewModel.toggleZapPoll() }
@@ -1276,13 +1278,13 @@ fun ComposeScreen(
                                 .clip(CircleShape)
                                 .clickable { viewModel.publishNow() }
                         ) {
-                            Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)))
-                            Box(modifier = Modifier.fillMaxHeight().fillMaxWidth(countdownProgress).background(MaterialTheme.colorScheme.primary))
+                            Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerHighest))
+                            Box(modifier = Modifier.fillMaxHeight().fillMaxWidth(countdownProgress).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)))
                             Text(
                                 text = stringResource(R.string.compose_post_now, countdownSeconds!!),
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color.White,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.align(Alignment.Center)
                             )
                         }

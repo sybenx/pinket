@@ -32,7 +32,7 @@ class InterfacePreferences(context: Context) {
 
     private val prefs = context.getSharedPreferences("wisp_settings", Context.MODE_PRIVATE)
 
-    fun getAccentColor(): Int = prefs.getInt("accent_color", 0xFFFF9800.toInt())
+    fun getAccentColor(): Int = prefs.getInt("accent_color", 0xFFFF6B5E.toInt())
     fun setAccentColor(colorInt: Int) = prefs.edit().putInt("accent_color", colorInt).apply()
 
     fun isLargeText(): Boolean = prefs.getBoolean("large_text", false)
@@ -134,6 +134,18 @@ class InterfacePreferences(context: Context) {
          * filter their `OnSharedPreferenceChangeListener` callbacks by it.
          */
         const val KEY_NOTIFICATION_FEED_STYLE = "notification_feed_style"
+    }
+
+    /**
+     * Runs once. The default accent moved from Wisp orange to Pinket's
+     * pinker orange; an install still holding the old default follows it.
+     * Any other stored accent is a choice and stays.
+     */
+    fun migrateBrand() {
+        if (prefs.getInt("accent_version", 0) >= 1) return
+        val e = prefs.edit()
+        if (prefs.getInt("accent_color", 0) == 0xFFFF9800.toInt()) e.remove("accent_color")
+        e.putInt("accent_version", 1).apply()
     }
 
     /** Reset all interface preferences to defaults (called on full logout). */

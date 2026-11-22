@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import android.content.Intent
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -395,7 +396,7 @@ fun PostCard(
                     imageVector = Icons.Outlined.VisibilityOff,
                     contentDescription = "Private reply",
                     modifier = Modifier.size(14.dp),
-                    tint = Color(0xFFFF8C00)
+                    tint = MaterialTheme.colorScheme.primary
                 )
                 Spacer(Modifier.width(4.dp))
             }
@@ -975,6 +976,7 @@ private fun PollOptionRow(
         shape = RoundedCornerShape(8.dp),
         color = if (selected) MaterialTheme.colorScheme.primaryContainer
                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp)

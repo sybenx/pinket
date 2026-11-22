@@ -1498,7 +1498,7 @@ private fun ProfileHeader(
                 nip05 = nip05,
                 pubkey = pubkey,
                 nip05Repo = nip05Repo,
-                verifiedTint = Color(0xFFFF8C00),
+                verifiedTint = MaterialTheme.colorScheme.primary,
                 iconLeading = true
             )
         }
@@ -2109,7 +2109,7 @@ private fun BlockedContentOverlay(onReveal: () -> Unit) {
             Text(
                 text = "Tap to reveal content",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.7f)
+                color = MaterialTheme.colorScheme.onErrorContainer
             )
         }
     }
