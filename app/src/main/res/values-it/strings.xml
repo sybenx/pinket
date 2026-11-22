@@ -461,8 +461,8 @@
     <string name="settings_hide_live_streams">Nascondi le dirette</string>
     <string name="settings_hide_live_streams_description">Nascondi la riga delle dirette in cima al feed</string>
     <string name="settings_client_tag">Tag Cliente</string>
-    <string name="settings_tag_notes">Etichetta le note con Wisp</string>
-    <string name="settings_tag_notes_description">Includi un\'etichetta che identifica Wisp come cliente. Questo è visibile agli altri.</string>
+    <string name="settings_tag_notes">Etichetta le note con Pinket</string>
+    <string name="settings_tag_notes_description">Includi un\'etichetta che identifica Pinket come cliente. Questo è visibile agli altri.</string>
     <string name="settings_public_key">Chiave Pubblica</string>
     <string name="settings_private_key">Chiave Privata</string>
     <string name="settings_public_key_copied">Chiave pubblica copiata</string>

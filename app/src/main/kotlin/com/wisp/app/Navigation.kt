@@ -3321,7 +3321,7 @@ fun WispNavHost(
                         }
                         val tags = replyTags +
                             com.wisp.app.nostr.Nip30.buildEmojiTagsForContent(content, notifResolvedEmojis) +
-                            if (notifInterfacePrefs.isClientTagEnabled()) listOf(listOf("client", "Wisp")) else emptyList()
+                            if (notifInterfacePrefs.isClientTagEnabled()) listOf(listOf("client", "Pinket")) else emptyList()
                         val replyKind = if (replyingToComment) com.wisp.app.nostr.Nip22.KIND_COMMENT else 1
 
                         // If the parent is a private reply we received, keep the thread encrypted

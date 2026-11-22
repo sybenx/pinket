@@ -461,8 +461,8 @@
     <string name="settings_hide_live_streams">Livestreams verbergen</string>
     <string name="settings_hide_live_streams_description">De livestream-rij bovenaan je feed verbergen</string>
     <string name="settings_client_tag">Client Tag</string>
-    <string name="settings_tag_notes">Notities taggen met Wisp</string>
-    <string name="settings_tag_notes_description">Voeg een tag toe die Wisp als client identificeert. Dit is zichtbaar voor anderen.</string>
+    <string name="settings_tag_notes">Notities taggen met Pinket</string>
+    <string name="settings_tag_notes_description">Voeg een tag toe die Pinket als client identificeert. Dit is zichtbaar voor anderen.</string>
     <string name="settings_public_key">Publieke Sleutel</string>
     <string name="settings_private_key">Privésleutel</string>
     <string name="settings_public_key_copied">Publieke sleutel gekopieerd</string>

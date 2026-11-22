@@ -461,8 +461,8 @@
     <string name="settings_hide_live_streams">Masquer les lives</string>
     <string name="settings_hide_live_streams_description">Masquer la barre de lives en haut de votre fil</string>
     <string name="settings_client_tag">Tag Client</string>
-    <string name="settings_tag_notes">Taguer les notes avec Wisp</string>
-    <string name="settings_tag_notes_description">Inclure un tag identifiant Wisp comme le client. Ceci est visible par les autres.</string>
+    <string name="settings_tag_notes">Taguer les notes avec Pinket</string>
+    <string name="settings_tag_notes_description">Inclure un tag identifiant Pinket comme le client. Ceci est visible par les autres.</string>
     <string name="settings_public_key">Clé Publique</string>
     <string name="settings_private_key">Clé Privée</string>
     <string name="settings_public_key_copied">Clé publique copiée</string>

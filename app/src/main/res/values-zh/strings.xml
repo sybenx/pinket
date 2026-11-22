@@ -461,8 +461,8 @@
     <string name="settings_hide_live_streams">隐藏直播</string>
     <string name="settings_hide_live_streams_description">隐藏动态顶部的直播栏</string>
     <string name="settings_client_tag">客户端标签</string>
-    <string name="settings_tag_notes">用 Wisp 标记帖子</string>
-    <string name="settings_tag_notes_description">包含标识 Wisp 为客户端的标签。这对其他人可见。</string>
+    <string name="settings_tag_notes">用 Pinket 标记帖子</string>
+    <string name="settings_tag_notes_description">包含标识 Pinket 为客户端的标签。这对其他人可见。</string>
     <string name="settings_public_key">公钥</string>
     <string name="settings_private_key">私钥</string>
     <string name="settings_public_key_copied">公钥已复制</string>

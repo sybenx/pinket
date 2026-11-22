@@ -461,8 +461,8 @@
     <string name="settings_hide_live_streams">라이브 스트림 숨기기</string>
     <string name="settings_hide_live_streams_description">피드 상단의 라이브 스트림 행을 숨깁니다</string>
     <string name="settings_client_tag">클라이언트 태그</string>
-    <string name="settings_tag_notes">Wisp로 노트 태그하기</string>
-    <string name="settings_tag_notes_description">Wisp를 클라이언트로 식별하는 태그 포함. 다른 사람에게 표시됨.</string>
+    <string name="settings_tag_notes">Pinket으로 노트 태그하기</string>
+    <string name="settings_tag_notes_description">Pinket를 클라이언트로 식별하는 태그 포함. 다른 사람에게 표시됨.</string>
     <string name="settings_public_key">공개키</string>
     <string name="settings_private_key">개인키</string>
     <string name="settings_public_key_copied">공개키 복사됨</string>

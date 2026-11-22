@@ -461,8 +461,8 @@
     <string name="settings_hide_live_streams">Livestreams ausblenden</string>
     <string name="settings_hide_live_streams_description">Die Livestream-Leiste oben im Feed ausblenden</string>
     <string name="settings_client_tag">Client-Tag</string>
-    <string name="settings_tag_notes">Notizen mit Wisp taggen</string>
-    <string name="settings_tag_notes_description">Ein Tag einfügen, das Wisp als Client identifiziert. Dies ist für andere sichtbar.</string>
+    <string name="settings_tag_notes">Notizen mit Pinket taggen</string>
+    <string name="settings_tag_notes_description">Ein Tag einfügen, das Pinket als Client identifiziert. Dies ist für andere sichtbar.</string>
     <string name="settings_public_key">Öffentlicher Schlüssel</string>
     <string name="settings_private_key">Privater Schlüssel</string>
     <string name="settings_public_key_copied">Öffentlicher Schlüssel kopiert</string>

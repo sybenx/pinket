@@ -461,8 +461,8 @@
     <string name="settings_hide_live_streams">ライブ配信を非表示</string>
     <string name="settings_hide_live_streams_description">フィード上部のライブ配信の行を非表示にする</string>
     <string name="settings_client_tag">クライアントタグ</string>
-    <string name="settings_tag_notes">ノートにWispをタグ付け</string>
-    <string name="settings_tag_notes_description">Wispをクライアントとして識別するタグを含める。これは他の人に表示されます。</string>
+    <string name="settings_tag_notes">ノートにPinketをタグ付け</string>
+    <string name="settings_tag_notes_description">Pinketをクライアントとして識別するタグを含める。これは他の人に表示されます。</string>
     <string name="settings_public_key">公開鍵</string>
     <string name="settings_private_key">秘密鍵</string>
     <string name="settings_public_key_copied">公開鍵をコピーしました</string>

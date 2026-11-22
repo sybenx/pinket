@@ -461,8 +461,8 @@
     <string name="settings_hide_live_streams">Ocultar transmisiones en vivo</string>
     <string name="settings_hide_live_streams_description">Ocultar la fila de transmisiones en vivo en la parte superior del feed</string>
     <string name="settings_client_tag">Etiqueta de Cliente</string>
-    <string name="settings_tag_notes">Etiquetar notas con Wisp</string>
-    <string name="settings_tag_notes_description">Incluir una etiqueta identificando Wisp como el cliente. Esto es visible para otros.</string>
+    <string name="settings_tag_notes">Etiquetar notas con Pinket</string>
+    <string name="settings_tag_notes_description">Incluir una etiqueta identificando Pinket como el cliente. Esto es visible para otros.</string>
     <string name="settings_public_key">Clave Pública</string>
     <string name="settings_private_key">Clave Privada</string>
     <string name="settings_public_key_copied">Clave pública copiada</string>
