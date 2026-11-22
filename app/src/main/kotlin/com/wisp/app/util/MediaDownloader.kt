@@ -85,7 +85,7 @@ object MediaDownloader {
 
     suspend fun saveImageBytes(context: Context, bytes: ByteArray, format: String) {
         try {
-            val fileName = "wisp_image_${System.currentTimeMillis()}.$format"
+            val fileName = "pinket_image_${System.currentTimeMillis()}.$format"
             val mimeType = "image/$format"
 
             withContext(Dispatchers.IO) {
