@@ -722,6 +722,9 @@ class FeedSubscriptionManager(
             }
 
             subManager.awaitEoseCount(subId, 1)
+            // A ranked list is finished at EOSE. Left open, the relay streams every new
+            // note from anyone into the Trending tab (relay.ditto.pub does).
+            subManager.closeSubscription(subId)
             onRelayFeedEose()
             subscribeEngagementForFeed()
             withContext(processingContext) {
@@ -748,7 +751,8 @@ class FeedSubscriptionManager(
         _trendingUsers.value = emptyList()
         _relayFeedStatus.value = RelayFeedStatus.Connecting
 
-        val filter = DittoTrending.notesFilter(TrendingWindow.HOT, System.currentTimeMillis() / 1000)
+        val requestedAt = System.currentTimeMillis() / 1000
+        val filter = DittoTrending.notesFilter(TrendingWindow.HOT, requestedAt)
         val currentGen = relayFeedGeneration
         val subId = relayFeedSubId
         val profileSubId = "$subId-profiles"
@@ -762,7 +766,7 @@ class FeedSubscriptionManager(
                     if (relayFeedGeneration != currentGen) return@collect
                     val event = relayEvent.event
                     when (relayEvent.subscriptionId) {
-                        subId -> if (event.kind == 1) synchronized(notes) { notes.add(event) }
+                        subId -> if (event.kind == 1 && event.created_at < requestedAt) synchronized(notes) { notes.add(event) }
                         profileSubId -> if (event.kind == 0) synchronized(profiles) {
                             val prev = profiles[event.pubkey]
                             if (prev == null || event.created_at > prev.created_at) profiles[event.pubkey] = event
@@ -1433,10 +1437,15 @@ class FeedSubscriptionManager(
     private suspend fun fetchTrendingForForYou(gen: Long) {
         val url = trendingPrefs.getRelay()
         val subId = "foryou-trending-$gen"
-        val filter = DittoTrending.notesFilter(TrendingWindow.HOT, System.currentTimeMillis() / 1000)
+        val requestedAt = System.currentTimeMillis() / 1000
+        val filter = DittoTrending.notesFilter(TrendingWindow.HOT, requestedAt)
         val collector = scope.launch {
             relayPool.relayEvents.collect { re ->
-                if (re.subscriptionId == subId && gen == forYouGeneration) {
+                // Only the ranked list: a note newer than the request was not ranked, it is the
+                // relay streaming live posts from anyone on the still-open subscription.
+                if (re.subscriptionId == subId && gen == forYouGeneration &&
+                    re.event.kind == 1 && re.event.created_at < requestedAt
+                ) {
                     eventRepo.addEvent(re.event)
                     eventRepo.addEventRelay(re.event.id, re.relayUrl)
                     eventRepo.requestProfileIfMissing(re.event.pubkey)
@@ -1446,6 +1455,8 @@ class FeedSubscriptionManager(
         try {
             relayPool.sendToRelayOrEphemeral(url, ClientMessage.req(subId, filter), skipBadCheck = true)
             subManager.awaitEoseWithTimeout(subId, timeoutMs = 10_000)
+            // Close at EOSE so nothing live follows; the wait only lets the collector drain.
+            subManager.closeSubscription(subId)
             delay(1_500)
         } finally {
             collector.cancel()
