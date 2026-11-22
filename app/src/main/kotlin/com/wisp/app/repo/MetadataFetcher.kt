@@ -25,7 +25,8 @@ class MetadataFetcher(
     private val profileRepo: ProfileRepository,
     private val eventRepo: EventRepository,
     private val scope: CoroutineScope,
-    private val processingContext: CoroutineContext
+    private val processingContext: CoroutineContext,
+    private val payTargetRepo: PayTargetRepository? = null
 ) {
     // Batched profile fetching
     private val pendingProfilePubkeys = mutableSetOf<String>()
@@ -34,6 +35,13 @@ class MetadataFetcher(
     private var profileBatchJob: Job? = null
     private var metaBatchCounter = 0
     private val profileAttempts = mutableMapOf<String, Int>()
+
+    // Batched kind 10133 (payment targets) fetching for accounts whose profile is
+    // already cached, so the profile batch above would skip them.
+    private val pendingPayPubkeys = mutableSetOf<String>()
+    private val inFlightPay = mutableSetOf<String>()
+    private var payBatchJob: Job? = null
+    private var payBatchCounter = 0
 
     // Batched reply count fetching
     private val pendingReplyCountIds = mutableSetOf<String>()
@@ -92,6 +100,11 @@ class MetadataFetcher(
             pendingProfileRelayHints.clear()
             inFlightProfiles.clear()
         }
+        payBatchJob?.cancel()
+        synchronized(pendingPayPubkeys) {
+            pendingPayPubkeys.clear()
+            inFlightPay.clear()
+        }
         synchronized(pendingReplyCountIds) { pendingReplyCountIds.clear() }
         synchronized(pendingZapCountIds) { pendingZapCountIds.clear() }
         synchronized(pendingOnDemandQuotes) {
@@ -106,6 +119,7 @@ class MetadataFetcher(
         synchronized(fetchedPollVotes) { fetchedPollVotes.clear() }
         synchronized(fetchedZapPollVotes) { fetchedZapPollVotes.clear() }
         metaBatchCounter = 0
+        payBatchCounter = 0
         replyCountBatchCounter = 0
         zapCountBatchCounter = 0
         onDemandQuoteBatchCounter = 0
@@ -149,6 +163,48 @@ class MetadataFetcher(
                     synchronized(pendingProfilePubkeys) { flushProfileBatch() }
                 }
             }
+        }
+    }
+
+    /**
+     * Queue a kind 10133 lookup for [pubkey]. Profile fetches already include kind
+     * 10133, so this is only for accounts whose profile is cached. Skips accounts
+     * looked up recently (see [PayTargetRepository.needsLookup]).
+     */
+    fun addToPendingPayTargets(pubkey: String) {
+        val repo = payTargetRepo ?: return
+        if (!repo.needsLookup(pubkey)) return
+        synchronized(pendingProfilePubkeys) {
+            // A pending/in-flight profile fetch already asks for kind 10133.
+            if (pubkey in pendingProfilePubkeys || pubkey in inFlightProfiles) return
+        }
+        synchronized(pendingPayPubkeys) {
+            if (pubkey in inFlightPay || !pendingPayPubkeys.add(pubkey)) return
+            if (pendingPayPubkeys.size >= 200) {
+                payBatchJob?.cancel()
+                flushPayBatch()
+            } else if (payBatchJob == null || payBatchJob?.isActive != true) {
+                payBatchJob = scope.launch(processingContext) {
+                    delay(150)
+                    synchronized(pendingPayPubkeys) { flushPayBatch() }
+                }
+            }
+        }
+    }
+
+    /** Must be called while holding pendingPayPubkeys lock */
+    private fun flushPayBatch() {
+        if (pendingPayPubkeys.isEmpty()) return
+        val subId = "pay-batch-${payBatchCounter++}"
+        val pubkeys = pendingPayPubkeys.toList()
+        pendingPayPubkeys.clear()
+        inFlightPay.addAll(pubkeys)
+        outboxRouter.requestPayTargets(subId, pubkeys)
+        scope.launch(processingContext) {
+            subManager.awaitEoseWithTimeout(subId)
+            subManager.closeSubscription(subId)
+            payTargetRepo?.markChecked(pubkeys)
+            synchronized(pendingPayPubkeys) { inFlightPay.removeAll(pubkeys.toSet()) }
         }
     }
 
@@ -368,7 +424,7 @@ class MetadataFetcher(
             outboxRouter.requestProfiles(subId, pubkeys)
         } else {
             // Retry: send to top 10 relays instead of all — most profiles are on major relays
-            val filter = Filter(kinds = listOf(0, 30315), authors = pubkeys, limit = pubkeys.size * 2)
+            val filter = Filter(kinds = OutboxRouter.PROFILE_KINDS, authors = pubkeys, limit = pubkeys.size * OutboxRouter.PROFILE_KINDS.size)
             relayPool.sendToTopRelays(ClientMessage.req(subId, filter), maxRelays = 10)
         }
 
@@ -376,7 +432,7 @@ class MetadataFetcher(
         val hintUrls = relayHints.values.flatten().distinct()
         if (hintUrls.isNotEmpty()) {
             val hintPubkeys = relayHints.keys.toList()
-            val filter = Filter(kinds = listOf(0, 30315), authors = hintPubkeys, limit = hintPubkeys.size * 2)
+            val filter = Filter(kinds = OutboxRouter.PROFILE_KINDS, authors = hintPubkeys, limit = hintPubkeys.size * OutboxRouter.PROFILE_KINDS.size)
             val msg = ClientMessage.req(subId, filter)
             for (url in hintUrls) {
                 relayPool.sendToRelayOrEphemeral(url, msg)
@@ -386,6 +442,8 @@ class MetadataFetcher(
         scope.launch(processingContext) {
             subManager.awaitEoseWithTimeout(subId)
             subManager.closeSubscription(subId)
+            // Profile requests include kind 10133, so these accounts' lists were looked up too.
+            payTargetRepo?.markChecked(pubkeys)
             synchronized(pendingProfilePubkeys) {
                 inFlightProfiles.removeAll(pubkeys.toSet())
             }

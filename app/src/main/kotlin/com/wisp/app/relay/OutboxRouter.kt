@@ -4,6 +4,7 @@ import android.util.Log
 import com.wisp.app.nostr.ClientMessage
 import com.wisp.app.nostr.Filter
 import com.wisp.app.nostr.Nip22
+import com.wisp.app.nostr.NipA3
 import com.wisp.app.repo.RelayListRepository
 
 class OutboxRouter(
@@ -13,6 +14,12 @@ class OutboxRouter(
     private val relayScoreBoard: RelayScoreBoard? = null
 ) {
     companion object {
+        /**
+         * Kinds fetched whenever we fetch a profile: metadata, NIP-38 status, and
+         * NIP-A3 payment targets (so the money button knows about Monero while scrolling).
+         */
+        val PROFILE_KINDS: List<Int> = listOf(0, 30315, NipA3.KIND_PAYMENT_TARGETS)
+
         /**
          * Maximum number of authors per filter in a single REQ.
          * Big relays (damus.io, nos.social) reject requests where total filter items exceed
@@ -220,17 +227,21 @@ class OutboxRouter(
         val knownPubkeys = pubkeys.filter { relayListRepo.hasRelayList(it) }
         val unknownPubkeys = pubkeys.filter { !relayListRepo.hasRelayList(it) }
 
-        val profileKinds = listOf(0, 30315)
+        val profileKinds = PROFILE_KINDS
+        // Chunked templates get limit = chunk size, so kind 10133 gets its own filter
+        // rather than competing with kind 0 for that budget.
+        val perAuthorTemplates = listOf(
+            Filter(kinds = listOf(0, 30315)),
+            Filter(kinds = listOf(NipA3.KIND_PAYMENT_TARGETS))
+        )
 
         if (knownPubkeys.isNotEmpty()) {
             val relayToAuthors = groupAuthorsByWriteRelay(knownPubkeys)
             for ((relayUrl, relayAuthors) in relayToAuthors) {
                 if (relayUrl.isEmpty()) {
-                    sendChunkedToAll(subId, relayAuthors, listOf(
-                        Filter(kinds = profileKinds)
-                    ), limitPerAuthor = true)
+                    sendChunkedToAll(subId, relayAuthors, perAuthorTemplates, limitPerAuthor = true)
                 } else {
-                    val f = Filter(kinds = profileKinds, authors = relayAuthors, limit = relayAuthors.size * 2)
+                    val f = Filter(kinds = profileKinds, authors = relayAuthors, limit = relayAuthors.size * profileKinds.size)
                     relayPool.sendToRelayOrEphemeral(relayUrl, ClientMessage.req(subId, f))
                 }
             }
@@ -238,13 +249,42 @@ class OutboxRouter(
 
         // Fallback: send unknown pubkeys to top relays + profile indexers
         if (unknownPubkeys.isNotEmpty()) {
-            sendChunkedToTopRelays(subId, unknownPubkeys, listOf(
-                Filter(kinds = profileKinds)
-            ), limitPerAuthor = true)
+            sendChunkedToTopRelays(subId, unknownPubkeys, perAuthorTemplates, limitPerAuthor = true)
             // Also query profile-specialized relays via ephemeral connections
             val chunks = unknownPubkeys.chunked(MAX_AUTHORS_PER_FILTER)
             for (chunk in chunks) {
-                val f = Filter(kinds = profileKinds, authors = chunk, limit = chunk.size * 2)
+                val f = Filter(kinds = profileKinds, authors = chunk, limit = chunk.size * profileKinds.size)
+                val msg = ClientMessage.req(subId, f)
+                for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
+                    relayPool.sendToRelayOrEphemeral(url, msg)
+                }
+            }
+        }
+    }
+
+    /**
+     * Request only NIP-A3 payment targets (kind 10133) for [pubkeys], routed like
+     * [requestProfiles]. Used for accounts whose profile is already cached.
+     */
+    fun requestPayTargets(subId: String, pubkeys: List<String>) {
+        val template = listOf(Filter(kinds = listOf(NipA3.KIND_PAYMENT_TARGETS)))
+        val knownPubkeys = pubkeys.filter { relayListRepo.hasRelayList(it) }
+        val unknownPubkeys = pubkeys.filter { !relayListRepo.hasRelayList(it) }
+
+        if (knownPubkeys.isNotEmpty()) {
+            for ((relayUrl, relayAuthors) in groupAuthorsByWriteRelay(knownPubkeys)) {
+                if (relayUrl.isEmpty()) {
+                    sendChunkedToAll(subId, relayAuthors, template, limitPerAuthor = true)
+                } else {
+                    val f = Filter(kinds = listOf(NipA3.KIND_PAYMENT_TARGETS), authors = relayAuthors, limit = relayAuthors.size)
+                    relayPool.sendToRelayOrEphemeral(relayUrl, ClientMessage.req(subId, f))
+                }
+            }
+        }
+        if (unknownPubkeys.isNotEmpty()) {
+            sendChunkedToTopRelays(subId, unknownPubkeys, template, limitPerAuthor = true)
+            for (chunk in unknownPubkeys.chunked(MAX_AUTHORS_PER_FILTER)) {
+                val f = Filter(kinds = listOf(NipA3.KIND_PAYMENT_TARGETS), authors = chunk, limit = chunk.size)
                 val msg = ClientMessage.req(subId, f)
                 for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
                     relayPool.sendToRelayOrEphemeral(url, msg)
@@ -442,7 +482,7 @@ class OutboxRouter(
             Log.d("OutboxRouter", "requestRelayListsAndProfiles: relay lists fresh, " +
                     "skipping kind 10002 — fetching ${missingProfiles.size} missing profiles only")
             if (missingProfiles.isEmpty()) return null
-            sendChunkedToAll(subId, missingProfiles, listOf(Filter(kinds = listOf(0))))
+            sendChunkedToAll(subId, missingProfiles, listOf(Filter(kinds = listOf(0, NipA3.KIND_PAYMENT_TARGETS))))
             return subId
         }
 
@@ -452,7 +492,7 @@ class OutboxRouter(
                 "${allMissing.size} unique to fetch")
         if (allMissing.isEmpty()) return null
 
-        sendChunkedToAll(subId, allMissing, listOf(Filter(kinds = listOf(0, 10002))))
+        sendChunkedToAll(subId, allMissing, listOf(Filter(kinds = listOf(0, 10002, NipA3.KIND_PAYMENT_TARGETS))))
         return subId
     }
 

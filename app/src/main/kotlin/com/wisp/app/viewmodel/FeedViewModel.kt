@@ -31,6 +31,7 @@ import com.wisp.app.db.EventPersistence
 import com.wisp.app.db.WispObjectBox
 import com.wisp.app.repo.EventRepository
 import com.wisp.app.repo.ExtendedNetworkRepository
+import com.wisp.app.repo.PayTargetRepository
 import com.wisp.app.repo.SocialGraphDb
 import com.wisp.app.repo.Nip05Repository
 import com.wisp.app.repo.KeyRepository
@@ -169,6 +170,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     )
     val healthTracker = RelayHealthTracker(app, pubkeyHex)
     val profileRepo = ProfileRepository(app)
+    val payTargetRepo = PayTargetRepository(app)
     val muteRepo = MuteRepository(app, pubkeyHex)
     val nip05Repo = Nip05Repository()
     val relayHintStore = RelayHintStore(app)
@@ -184,6 +186,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         it.deletedEventsRepo = deletedEventsRepo
         it.eventPersistence = eventPersistence
         it.keyRepo = keyRepo
+        it.payTargetRepo = payTargetRepo
     }
     val contactRepo = ContactRepository(app, pubkeyHex).also {
         eventRepo.contactRepo = it
@@ -314,7 +317,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
 
     val metadataFetcher = MetadataFetcher(
         relayPool, outboxRouter, subManager, profileRepo, eventRepo,
-        accountScope, processingDispatcher
+        accountScope, processingDispatcher, payTargetRepo
     ).also {
         eventRepo.metadataFetcher = it
         it.quoteRelayProvider = {
@@ -567,6 +570,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         for ((name, block) in listOf<Pair<String, suspend () -> Unit>>(
             "events" to { eventPersistence?.flush() },
             "profiles" to { profileRepo.flush() },
+            "pay targets" to { payTargetRepo.flush() },
             "relay lists" to { relayListRepo.flush() }
         )) {
             try {
@@ -1008,6 +1012,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob()).launch(kotlinx.coroutines.Dispatchers.IO) {
             try { eventPersistence?.shutdown() } catch (e: Exception) { Log.w("FeedVM", "Event persistence shutdown failed", e) }
             try { profileRepo.shutdown() } catch (e: Exception) { Log.w("FeedVM", "Profile persistence shutdown failed", e) }
+            try { payTargetRepo.shutdown() } catch (e: Exception) { Log.w("FeedVM", "Pay target persistence shutdown failed", e) }
             try { relayListRepo.shutdown() } catch (e: Exception) { Log.w("FeedVM", "Relay list persistence shutdown failed", e) }
         }
     }

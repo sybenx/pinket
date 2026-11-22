@@ -66,6 +66,10 @@ object ExchangeRateRepository {
     /** Map of UPPERCASE currency code → BTC price in that currency. */
     val rates: StateFlow<Map<String, Double>> = _rates.asStateFlow()
 
+    private val _xmrRates = MutableStateFlow<Map<String, Double>>(emptyMap())
+    /** Map of UPPERCASE currency code → XMR price in that currency. Empty when unknown. */
+    val xmrRates: StateFlow<Map<String, Double>> = _xmrRates.asStateFlow()
+
     private val _updatedAtMs = MutableStateFlow(0L)
     val updatedAtMs: StateFlow<Long> = _updatedAtMs.asStateFlow()
 
@@ -82,7 +86,7 @@ object ExchangeRateRepository {
         val ctx = appContext ?: return
         scope.launch {
             try {
-                val url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=$vsCurrencies"
+                val url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,monero&vs_currencies=$vsCurrencies"
                 val client = HttpClientFactory.getGeneralClient()
                 val request = Request.Builder().url(url).build()
                 client.newCall(request).execute().use { response ->
@@ -95,6 +99,7 @@ object ExchangeRateRepository {
                     if (parsed.isNotEmpty()) {
                         val now = System.currentTimeMillis()
                         _rates.value = parsed
+                        _xmrRates.value = parseRates(body, "monero")
                         _updatedAtMs.value = now
                         saveCached(ctx, body, now)
                     }
@@ -127,6 +132,15 @@ object ExchangeRateRepository {
         return (majorAmount / btcPrice * 100_000_000.0).toLong()
     }
 
+    /**
+     * Converts an XMR amount to fiat in the given currency, or null when no XMR
+     * price is cached (older cache, failed fetch). Never block sending on this.
+     */
+    fun xmrToFiat(xmr: Double, currency: String): Double? {
+        val xmrPrice = _xmrRates.value[currency.uppercase()] ?: return null
+        return xmr * xmrPrice
+    }
+
     fun currencyFor(code: String): FiatCurrency =
         SUPPORTED.firstOrNull { it.code.equals(code, ignoreCase = true) } ?: SUPPORTED[0]
 
@@ -139,6 +153,7 @@ object ExchangeRateRepository {
             val parsed = parseRates(body)
             if (parsed.isNotEmpty()) {
                 _rates.value = parsed
+                _xmrRates.value = parseRates(body, "monero")
                 _updatedAtMs.value = updatedAt
             }
         } catch (e: Exception) {
@@ -154,9 +169,9 @@ object ExchangeRateRepository {
             .apply()
     }
 
-    private fun parseRates(body: String): Map<String, Double> {
+    private fun parseRates(body: String, coin: String = "bitcoin"): Map<String, Double> {
         val root = json.parseToJsonElement(body).jsonObject
-        val btc = root["bitcoin"]?.jsonObject ?: return emptyMap()
+        val btc = root[coin]?.jsonObject ?: return emptyMap()
         val out = mutableMapOf<String, Double>()
         for ((key, value) in btc) {
             val price = value.jsonPrimitive.doubleOrNull ?: continue

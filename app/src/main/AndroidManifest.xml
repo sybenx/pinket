@@ -11,6 +11,14 @@
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- Monero tips hand off to the phone's wallet app via monero: links. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="monero" />
+        </intent>
+    </queries>
+
     <application
         android:name=".WispApp"
         android:allowBackup="false"
