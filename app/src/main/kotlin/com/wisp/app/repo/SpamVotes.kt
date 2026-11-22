@@ -37,7 +37,10 @@ data class SpamVote(
  * reads: safe on the main thread and inside locks.
  */
 class SpamVotesSnapshot(votes: List<SpamVote>) {
-    val all: List<SpamVote> = votes.sortedByDescending { it.createdAt }
+    /** Newest first; within one vote the person comes before the post's text and links. */
+    val all: List<SpamVote> = votes.sortedWith(
+        compareByDescending<SpamVote> { it.createdAt }.thenBy { it.type.ordinal }.thenBy { it.key }
+    )
     private val authors = HashMap<String, Boolean>()
     private val texts = HashMap<String, Boolean>()
     private val domains = HashMap<String, Boolean>()
@@ -221,10 +224,16 @@ class SpamVotesRepository(
         publish(SpamVotesSnapshot(socialGraphDb.getSpamVotes()))
     }
 
-    /** Takes one vote back. Returns the vote as it was stored (with its report id), or null. */
+    /**
+     * Takes one vote back. Undoing a vote on a person also undoes what the
+     * same tap recorded about the post (its text and links), so the post
+     * comes back in one step; those can also be undone on their own.
+     * Returns the vote as it was stored (with its report id), or null.
+     */
     suspend fun undo(type: SpamVote.Type, key: String): SpamVote? = withContext(Dispatchers.IO) {
-        val row = socialGraphDb.getSpamVotes().firstOrNull { it.type == type && it.key == key }
-        socialGraphDb.deleteSpamVotes(listOf(type to key))
+        val all = socialGraphDb.getSpamVotes()
+        val row = all.firstOrNull { it.type == type && it.key == key }
+        socialGraphDb.deleteSpamVotes(undoKeys(all, type, key))
         publish(SpamVotesSnapshot(socialGraphDb.getSpamVotes()))
         row
     }
@@ -233,6 +242,15 @@ class SpamVotesRepository(
 
     companion object {
         private const val TAG = "SpamVotes"
+
+        /** Which rows an undo of ([type], [key]) removes. Pure, for tests. */
+        fun undoKeys(all: List<SpamVote>, type: SpamVote.Type, key: String): List<Pair<SpamVote.Type, String>> {
+            val row = all.firstOrNull { it.type == type && it.key == key } ?: return listOf(type to key)
+            if (type != SpamVote.Type.AUTHOR) return listOf(type to key)
+            return all.filter {
+                it === row || (it.type != SpamVote.Type.AUTHOR && it.spam == row.spam && it.createdAt == row.createdAt)
+            }.map { it.type to it.key }
+        }
 
         fun snippet(content: String): String {
             val oneLine = content.replace(Regex("\\s+"), " ").trim()

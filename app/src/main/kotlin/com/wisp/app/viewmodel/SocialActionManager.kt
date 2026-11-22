@@ -197,7 +197,10 @@ class SocialActionManager(
      * its id never reaches public servers.
      */
     suspend fun reportSpam(event: NostrEvent): String? {
-        val s = getSigner() ?: return null
+        val s = getSigner() ?: run {
+            android.util.Log.d("SocialActions", "Spam report skipped: this login cannot sign")
+            return null
+        }
         return try {
             val tags = com.wisp.app.repo.NetworkReportSignals.buildSpamReportTags(
                 eventId = if (eventRepo.isPrivate(event.id)) null else event.id,
@@ -206,7 +209,8 @@ class SocialActionManager(
             val report = s.signEvent(
                 kind = com.wisp.app.repo.NetworkReportSignals.KIND_REPORT, content = "", tags = tags
             )
-            relayPool.sendToWriteRelays(ClientMessage.event(report))
+            val sent = relayPool.sendToWriteRelays(ClientMessage.event(report))
+            android.util.Log.d("SocialActions", "Spam report ${report.id.take(12)} sent to $sent servers")
             report.id
         } catch (e: Exception) {
             android.util.Log.w("SocialActions", "Spam report failed", e)
