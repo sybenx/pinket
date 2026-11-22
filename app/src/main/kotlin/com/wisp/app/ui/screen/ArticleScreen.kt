@@ -69,6 +69,7 @@ import com.wisp.app.nostr.Nip30
 import com.wisp.app.nostr.toNpub
 import com.wisp.app.nostr.NostrEvent
 import com.wisp.app.ui.component.ActionBar
+import com.wisp.app.ui.component.rememberMoneroOnly
 import com.wisp.app.ui.component.NoteActions
 import com.wisp.app.ui.component.PostCard
 import com.wisp.app.ui.component.RichContent
@@ -334,6 +335,7 @@ fun ArticleScreen(
                                 resolvedEmojis = resolvedEmojis,
                                 unicodeEmojis = unicodeEmojis,
                                 onOpenEmojiLibrary = onOpenEmojiLibrary,
+                                moneroOnly = rememberMoneroOnly(eventRepo, articleEvent.pubkey),
                                 modifier = Modifier.padding(horizontal = 8.dp)
                             )
                         }
@@ -415,6 +417,7 @@ fun ArticleScreen(
                                 hasUserReposted = commentHasUserReposted,
                                 repostCount = commentRepostCount,
                                 onZap = { onZap(event) },
+                                moneroTips = true,
                                 hasUserZapped = commentHasUserZapped,
                                 likeCount = commentLikeCount,
                                 replyCount = commentReplyCount,
