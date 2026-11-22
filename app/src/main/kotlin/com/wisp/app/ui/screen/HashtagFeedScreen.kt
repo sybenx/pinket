@@ -1,5 +1,6 @@
 package com.wisp.app.ui.screen
 
+import com.wisp.app.ui.component.HeldRowsPill
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -11,7 +12,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -31,7 +31,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +50,7 @@ import com.wisp.app.ui.component.PostCard
 import com.wisp.app.repo.EventRepository
 import com.wisp.app.repo.Nip05Repository
 import com.wisp.app.repo.TranslationRepository
+import com.wisp.app.ui.util.bind
 import com.wisp.app.viewmodel.HashtagFeedViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -79,6 +79,19 @@ fun HashtagFeedScreen(
     val setName by viewModel.setName.collectAsState()
     val notes by viewModel.notes.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+
+    // Rows on screen stay where they are while notes arrive; the first ones are shown together.
+    val listHolder = viewModel.listHolder
+    val listState = listHolder.listState
+    val shownNotes = listHolder.bind(source = notes, context = hashtag)
+    com.wisp.app.ui.util.JumpLogger(listState, "hashtag")
+    // Blocking someone or deleting a note is a change the reader asked for: show it at once.
+    val heldNoteActions = remember(noteActions, listHolder) {
+        noteActions.copy(
+            onBlockAuthor = { pubkey -> listHolder.expectChange(); noteActions.onBlockAuthor(pubkey) },
+            onDelete = { id, kind -> listHolder.expectChange(); noteActions.onDelete(id, kind) }
+        )
+    }
 
     val profileVersion by eventRepo.profileVersion.collectAsState()
     val reactionVersion by eventRepo.reactionVersion.collectAsState()
@@ -153,7 +166,7 @@ fun HashtagFeedScreen(
             )
         }
     ) { innerPadding ->
-        if (isLoading && notes.isEmpty()) {
+        if (shownNotes.isEmpty() && (isLoading || notes.isNotEmpty())) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -163,19 +176,14 @@ fun HashtagFeedScreen(
                 CircularProgressIndicator(modifier = Modifier.size(32.dp))
             }
         } else {
-            val listState = remember(hashtag) { LazyListState() }
-            LaunchedEffect(isLoading) {
-                if (!isLoading) {
-                    listState.scrollToItem(0)
-                }
-            }
+            Box(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-                items(items = notes, key = { it.id }) { event ->
+                items(items = shownNotes, key = { it.id }, contentType = { "post" }) { event ->
                     HashtagFeedItem(
                         event = event,
                         eventRepo = eventRepo,
@@ -185,7 +193,7 @@ fun HashtagFeedScreen(
                         replyCountVersion = replyCountVersion,
                         zapVersion = zapVersion,
                         repostVersion = repostVersion,
-                        noteActions = noteActions,
+                        noteActions = heldNoteActions,
                         nip05Repo = nip05Repo,
                         translationRepo = translationRepo,
                         autoTranslate = autoTranslate,
@@ -196,6 +204,8 @@ fun HashtagFeedScreen(
                         isZapInProgress = event.id in zapInProgressIds
                     )
                 }
+            }
+            HeldRowsPill(viewModel.listHolder, "New posts", Modifier.padding(innerPadding))
             }
         }
     }

@@ -49,6 +49,9 @@ class ArticleViewModel : ViewModel() {
     private val _isCommentsLoading = MutableStateFlow(false)
     val isCommentsLoading: StateFlow<Boolean> = _isCommentsLoading
 
+    /** Keeps the comment rows on screen in place while comments arrive; outlives the screen. */
+    val commentsHolder = com.wisp.app.ui.util.StableListHolder<ThreadItem>(keyOf = { "comment_${it.key}" })
+
     private val commentEvents = mutableMapOf<String, NostrEvent>()
     private var currentArticleEventId: String? = null
     /** Anchors whose folded comment subtree the user expanded inline. */

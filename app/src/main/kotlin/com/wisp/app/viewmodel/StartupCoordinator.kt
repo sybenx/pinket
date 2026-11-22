@@ -456,6 +456,7 @@ class StartupCoordinator(
 
             // Subscribe feed with current follow list and relay routing.
             Log.d("StartupCoord", "Subscribing feed, feedType=${feedSub.feedType.value}")
+            feedSub.applySavedFeedTypeBeforeFirstLoad()
             feedSub.applyAuthorFilterForFeedType(feedSub.feedType.value)
 
             // Seed eventCache from ObjectBox so the feed is populated immediately on warm

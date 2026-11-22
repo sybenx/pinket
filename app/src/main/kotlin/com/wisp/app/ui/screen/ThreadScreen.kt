@@ -47,6 +47,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import com.wisp.app.ui.util.bind
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -125,8 +127,36 @@ fun ThreadScreen(
     val flatThread by viewModel.flatThread.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val scrollToIndex by viewModel.scrollToIndex.collectAsState()
-    val listState = rememberLazyListState()
+    val listHolder = viewModel.listHolder
+    val listState = listHolder.listState
+    // What the reader does to the thread themselves shows at once.
+    @Suppress("NAME_SHADOWING")
+    val onBlockUser: (String) -> Unit = { pubkey -> listHolder.expectChange(); onBlockUser(pubkey) }
+    @Suppress("NAME_SHADOWING")
+    val onDeleteEvent: (String, Int) -> Unit = { id, kind -> listHolder.expectChange(); onDeleteEvent(id, kind) }
+    @Suppress("NAME_SHADOWING")
+    val onReply: (NostrEvent) -> Unit = { event -> listHolder.expectChangeOnReturn(); onReply(event) }
     val scope = rememberCoroutineScope()
+    // The note the thread was opened on stays where it is while the notes above it and the
+    // replies below it arrive. Once the reader scrolls, the rows on screen are simply held.
+    var readerScrolled by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect {
+            if (it is androidx.compose.foundation.interaction.DragInteraction.Start) readerScrolled = true
+        }
+    }
+    listHolder.pinKey = if (readerScrolled) null else viewModel.openedEventId
+    val shownThread = listHolder.bind(source = flatThread, context = viewModel.openedEventId)
+    com.wisp.app.ui.util.JumpLogger(listState, "thread")
+    com.wisp.app.ui.component.WarmRowsAhead(
+        listState = listState,
+        rows = shownThread,
+        upcoming = flatThread,
+        eventRepo = eventRepo,
+        autoTranslate = autoTranslate,
+        keyOf = { it.key },
+        eventOf = { (it as? ThreadItem.Post)?.event }
+    )
 
     var showRootButton by remember { mutableStateOf(false) }
     var previousIndex by remember { mutableIntStateOf(0) }
@@ -156,10 +186,10 @@ fun ThreadScreen(
     LaunchedEffect(scrollToIndex) {
         if (scrollToIndex >= 0) {
             // Wait for list to have enough items, then scroll
-            val target = scrollToIndex
             for (attempt in 0 until 10) {
-                if (listState.layoutInfo.totalItemsCount > target) {
-                    listState.animateScrollToItem(target)
+                val target = listHolder.shown.indexOfFirst { it.key == viewModel.openedEventId }
+                if (target >= 0 && listState.layoutInfo.totalItemsCount > target) {
+                    listState.scrollToItem(target)
                     break
                 }
                 kotlinx.coroutines.delay(150)
@@ -170,9 +200,9 @@ fun ThreadScreen(
 
     // After an inline expand inserts a subtree, restore the captured viewport position so the
     // note above the button stays exactly where it was.
-    LaunchedEffect(restoreAnchor, flatThread) {
+    LaunchedEffect(restoreAnchor, shownThread) {
         val (anchorKey, anchorOffset) = restoreAnchor ?: return@LaunchedEffect
-        val index = flatThread.indexOfFirst { it.key == anchorKey }
+        val index = shownThread.indexOfFirst { it.key == anchorKey }
         if (index >= 0) listState.scrollToItem(index, anchorOffset)
         restoreAnchor = null
     }
@@ -226,6 +256,7 @@ fun ThreadScreen(
         listState.layoutInfo.visibleItemsInfo.firstOrNull()?.let { first ->
             restoreAnchor = first.key to listState.firstVisibleItemScrollOffset
         }
+        listHolder.expectChange()
         viewModel.expandBranch(anchorId)
     }
 
@@ -256,7 +287,7 @@ fun ThreadScreen(
             )
         }
     ) { padding ->
-        if (isLoading && flatThread.isEmpty()) {
+        if (isLoading && flatThread.isEmpty() && shownThread.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentAlignment = Alignment.Center
@@ -271,7 +302,7 @@ fun ThreadScreen(
                     state = listState,
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(items = flatThread, key = { it.key }, contentType = { it.contentType }) { item ->
+                    items(items = shownThread, key = { it.key }, contentType = { it.contentType }) { item ->
                         if (item !is ThreadItem.Post) {
                             // Folded subtree — expand inline, anchoring the note above the button.
                             if (item is ThreadItem.CollapsedReplies) {
@@ -576,6 +607,26 @@ fun ThreadScreen(
                                 }
                             }
                         }
+                    }
+                }
+                // Replies that belong between rows on screen wait here until asked for.
+                val waitingReplies = listHolder.held
+                if (waitingReplies > 0) {
+                    Surface(
+                        onClick = { listHolder.syncNow() },
+                        shape = RoundedCornerShape(20.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        shadowElevation = 4.dp,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 12.dp)
+                    ) {
+                        Text(
+                            text = if (waitingReplies == 1) "Show 1 more reply" else "Show $waitingReplies more replies",
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
                     }
                 }
                 AnimatedVisibility(

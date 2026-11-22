@@ -1342,6 +1342,23 @@ class FeedSubscriptionManager(
         editor.apply()
     }
 
+    /**
+     * Picks the feed the app opens on before the first posts are shown. Without this the launch
+     * shows For You, then swaps to Follows and jumps to the top once the first load finishes.
+     * Feeds that need more than a filter (a list, a single relay) are still restored later.
+     */
+    fun applySavedFeedTypeBeforeFirstLoad() {
+        if (hasRestoredFeedType) return
+        val savedType = prefs.getString(KEY_LAST_FEED_TYPE, null)
+            ?.let { runCatching { FeedType.valueOf(it) }.getOrNull() }
+            ?.takeIf { it != FeedType.TRENDING && it != FeedType.FOR_YOU }
+            ?: FeedType.FOLLOWS
+        if (savedType == FeedType.FOLLOWS || savedType == FeedType.EXTENDED_FOLLOWS) {
+            hasRestoredFeedType = true
+            _feedType.value = savedType
+        }
+    }
+
     private fun restoreSavedFeedType() {
         if (hasRestoredFeedType) return
         hasRestoredFeedType = true

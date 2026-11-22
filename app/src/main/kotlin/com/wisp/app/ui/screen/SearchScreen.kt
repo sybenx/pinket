@@ -1,5 +1,6 @@
 package com.wisp.app.ui.screen
 
+import com.wisp.app.ui.component.HeldRowsPill
 import com.wisp.app.ui.theme.WispThemeColors
 import com.wisp.app.ui.theme.cornerRim
 import androidx.compose.animation.AnimatedVisibility
@@ -60,6 +61,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import com.wisp.app.ui.util.bind
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -147,6 +149,23 @@ fun SearchScreen(
     val directMatch by viewModel.directMatch.collectAsState()
     val searchedQuery by viewModel.searchedQuery.collectAsState()
     val filtersActive = selectedRelayOption != RelayOption.DEFAULT || authorFilter != null
+
+    // Result rows on screen stay where they are while more results arrive. Each search (its words,
+    // tab, places searched and author) is its own list.
+    val searchContext = listOf(searchedQuery, filter, selectedRelayOption, selectedRelayUrl, authorFilter?.pubkey)
+    val sortedUsers = remember(users) {
+        users.sortedByDescending { contactRepo?.isFollowing(it.pubkey) == true }
+    }
+    val shownUsers = viewModel.usersHolder.bind(source = sortedUsers, context = searchContext)
+    val shownNotes = viewModel.notesHolder.bind(source = notes, context = searchContext)
+    val listState = if (filter == SearchFilter.PEOPLE) viewModel.usersHolder.listState else viewModel.notesHolder.listState
+    com.wisp.app.ui.util.JumpLogger(listState, "search")
+    // The first results of a search are gathered and shown together.
+    val gathering = if (filter == SearchFilter.PEOPLE) {
+        sortedUsers.isNotEmpty() && shownUsers.isEmpty()
+    } else {
+        notes.isNotEmpty() && shownNotes.isEmpty()
+    }
 
     val reactionVersion by eventRepo.reactionVersion.collectAsState()
     val repostVersion by eventRepo.repostVersion.collectAsState()
@@ -305,7 +324,7 @@ fun SearchScreen(
             // Results
             val hasResults = users.isNotEmpty() || notes.isNotEmpty() || directMatch != null
             when {
-                !hasResults && isSearching -> {
+                (!hasResults && isSearching) || (gathering && directMatch == null) -> {
                     Box(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
@@ -344,9 +363,6 @@ fun SearchScreen(
 
                 else -> {
                     val pollVoteVersion by eventRepo.pollVoteVersion.collectAsState()
-                    val sortedUsers = remember(users) {
-                        users.sortedByDescending { contactRepo?.isFollowing(it.pubkey) == true }
-                    }
                     val noteResult: @Composable (NostrEvent) -> Unit = { event ->
                         val translationState by remember(event.id) {
                             translationRepo?.stateFor(event.id) ?: kotlinx.coroutines.flow.flowOf(com.wisp.app.repo.TranslationState())
@@ -391,10 +407,10 @@ fun SearchScreen(
                             onQuote = { onQuote(event) },
                             onZap = { onZap(event) },
                             onFollowAuthor = { onToggleFollow(event.pubkey) },
-                            onBlockAuthor = { onBlockUser(event.pubkey) },
+                            onBlockAuthor = { viewModel.notesHolder.expectChange(); onBlockUser(event.pubkey) },
                             onAddToList = { onAddToList(event.id) },
                             isInList = event.id in listedIds,
-                            onDelete = { onDeleteEvent(event.id, event.kind) },
+                            onDelete = { viewModel.notesHolder.expectChange(); onDeleteEvent(event.id, event.kind) },
                             translationState = translationState,
                             onTranslate = { translationRepo?.translate(event) },
                             autoTranslate = autoTranslate,
@@ -412,7 +428,8 @@ fun SearchScreen(
                         if (isSearching) {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         }
-                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                             directMatch?.let { match ->
                                 item(key = "direct", contentType = "direct") {
                                     DirectMatchItem(
@@ -427,7 +444,7 @@ fun SearchScreen(
                                 }
                             }
                             if (filter == SearchFilter.PEOPLE) {
-                                items(sortedUsers, key = { it.pubkey }, contentType = { "user" }) { profile ->
+                                items(shownUsers, key = { it.pubkey }, contentType = { "user" }) { profile ->
                                     UserResultItem(
                                         profile = profile,
                                         isFollowing = followList.any { it.pubkey == profile.pubkey },
@@ -436,10 +453,12 @@ fun SearchScreen(
                                     )
                                 }
                             } else {
-                                items(notes, key = { it.id }, contentType = { "post" }) { event ->
+                                items(shownNotes, key = { it.id }, contentType = { "post" }) { event ->
                                     noteResult(event)
                                 }
                             }
+                        }
+                        HeldRowsPill(if (filter == SearchFilter.PEOPLE) viewModel.usersHolder else viewModel.notesHolder, "More results")
                         }
                     }
                 }

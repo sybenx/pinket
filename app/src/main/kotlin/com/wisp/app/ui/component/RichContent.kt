@@ -57,6 +57,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -260,6 +261,9 @@ fun parseImetaTags(tags: List<List<String>>): Map<String, MediaMeta> {
     }
     return map
 }
+
+/** [classifyByMime] for other files in this package: "image", "video", "audio" or null. */
+internal fun classifyMediaType(mime: String): String? = classifyByMime(mime)
 
 private fun classifyByMime(mime: String): String? = when {
     imageMimeTypes.any { mime.startsWith(it) } -> "image"
@@ -1158,10 +1162,14 @@ fun QuotedNote(
     relayHints: List<String> = emptyList(),
     onNoteClick: ((String) -> Unit)? = null,
     noteActions: NoteActions? = null,
-    quoteDepth: Int = 0
+    quoteDepth: Int = 0,
+    forceStub: Boolean = false
 ) {
     val event = rememberObservedEvent(eventRepo, eventId)
     val profile = rememberProfile(eventRepo, event?.pubkey)
+    // A quote that wasn't in memory when the row was composed keeps the loading card's height when it
+    // arrives: it fills that one line, and the full card shows the next time the row is composed.
+    val presentAtStart = rememberPresentAtStart(eventId, event != null)
 
     // Trigger on-demand fetch if the quoted event isn't cached
     LaunchedEffect(eventRepo, eventId, relayHints) {
@@ -1183,7 +1191,19 @@ fun QuotedNote(
         }
     }
 
-    if (event != null && effectiveActions != null) {
+    if (event != null && (forceStub || !presentAtStart)) {
+        QuoteStubCard(onClick = effectiveNoteClick?.let { click -> { click(eventId) } }) {
+            QuoteArrivedLine(
+                pictureUrl = profile?.picture,
+                name = profile?.displayString
+                    ?: event.pubkey.toNpub().let { "${it.take(12)}...${it.takeLast(4)}" },
+                text = stubSnippet(
+                    (if (isGalleryEvent(event)) com.wisp.app.nostr.Nip68.getTitle(event) else null)
+                        ?.takeIf { it.isNotBlank() } ?: event.content
+                )
+            )
+        }
+    } else if (event != null && effectiveActions != null) {
         // Full rendering with all interactive features
         val engagement by remember(eventRepo, eventId) {
             eventRepo.engagementVersion(eventId)
@@ -1406,33 +1426,9 @@ fun QuotedNote(
             }
         }
     } else {
-        // Loading state
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            color = MaterialTheme.colorScheme.surface,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 6.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(14.dp)
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .width(14.dp)
-                        .height(14.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = "Loading note...",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+        // Loading state: the same fixed height as the late-arrival stub
+        QuoteStubCard {
+            QuoteLoadingLine("Loading note...")
         }
     }
 }
@@ -1451,6 +1447,7 @@ private fun QuotedAddressableNote(
     style: TextStyle
 ) {
     val event = rememberAddressableEvent(eventRepo, kind, author, dTag)
+    val presentAtStart = rememberPresentAtStart(listOf(kind, author, dTag), event != null)
 
     LaunchedEffect(eventRepo, kind, author, dTag, relayHints) {
         if (eventRepo.findAddressableEvent(kind, author, dTag) == null) {
@@ -1464,36 +1461,13 @@ private fun QuotedAddressableNote(
             eventRepo = eventRepo,
             onNoteClick = onNoteClick,
             noteActions = noteActions,
-            quoteDepth = quoteDepth
+            quoteDepth = quoteDepth,
+            forceStub = !presentAtStart
         )
     } else {
-        // Loading state
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            color = MaterialTheme.colorScheme.surface,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 6.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(14.dp)
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .width(14.dp)
-                        .height(14.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = "Loading note...",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+        // Loading state: the same fixed height as the late-arrival stub
+        QuoteStubCard {
+            QuoteLoadingLine("Loading note...")
         }
     }
 }
@@ -1528,6 +1502,7 @@ private fun ArticleCard(
 ) {
     val event = rememberAddressableEvent(eventRepo, 30023, author, dTag)
     val profile = rememberProfile(eventRepo, author)
+    val presentAtStart = rememberPresentAtStart(listOf(author, dTag), event != null)
 
     LaunchedEffect(eventRepo, author, dTag, relayHints) {
         if (eventRepo.findAddressableEvent(30023, author, dTag) == null) {
@@ -1535,35 +1510,20 @@ private fun ArticleCard(
         }
     }
 
+    val articleTap = onArticleClick?.let { click -> { click(30023, author, dTag) } }
     if (event == null) {
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            color = MaterialTheme.colorScheme.surface,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 6.dp)
-                .then(
-                    if (onArticleClick != null) Modifier.clickable { onArticleClick(30023, author, dTag) }
-                    else Modifier
-                )
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(14.dp)
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.width(14.dp).height(14.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = "Loading article...",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+        QuoteStubCard(onClick = articleTap) {
+            QuoteLoadingLine("Loading article...")
+        }
+    } else if (!presentAtStart) {
+        // Arrived after the row was composed: same height as the loading line
+        QuoteStubCard(onClick = articleTap) {
+            QuoteArrivedLine(
+                pictureUrl = profile?.picture,
+                name = null,
+                text = event.tags.firstOrNull { it.size >= 2 && it[0] == "title" }?.get(1)
+                    ?.takeIf { it.isNotBlank() } ?: "Untitled Article"
+            )
         }
     } else {
         ArticlePreviewCard(
@@ -1618,7 +1578,7 @@ internal fun ArticlePreviewCard(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .let { if (ratio != null) it.aspectRatio(ratio) else it.heightIn(max = 180.dp) }
+                        .aspectRatio(ratio ?: (16f / 9f)) // no size given: a fixed 16:9 box, cropped
                         .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)),
                 )
             }
@@ -1754,6 +1714,7 @@ private fun MusicTrackCard(
     val context = LocalContext.current
     val event = rememberAddressableEvent(eventRepo, 36787, author, dTag)
     val profile = rememberProfile(eventRepo, author)
+    val presentAtStart = rememberPresentAtStart(listOf(author, dTag), event != null)
 
     LaunchedEffect(eventRepo, author, dTag, relayHints) {
         if (eventRepo.findAddressableEvent(36787, author, dTag) == null) {
@@ -1792,22 +1753,15 @@ private fun MusicTrackCard(
             .padding(vertical = 6.dp)
     ) {
         if (event == null) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(14.dp)
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.width(14.dp).height(14.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = "Loading track...",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            QuoteLoadingLine("Loading track...")
+        } else if (!presentAtStart) {
+            // Arrived after the row was composed: same height as the loading line
+            QuoteArrivedLine(
+                pictureUrl = image ?: profile?.picture,
+                name = null,
+                text = listOfNotNull(title ?: "Untitled Track", artist?.takeIf { it.isNotBlank() })
+                    .joinToString(" \u00b7 ")
+            )
         } else {
             Column(modifier = Modifier.padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1970,6 +1924,7 @@ private fun LiveStreamCard(
 ) {
     val event = rememberAddressableEvent(eventRepo, 30311, author, dTag)
     val profile = rememberProfile(eventRepo, author)
+    val presentAtStart = rememberPresentAtStart(listOf(author, dTag), event != null)
 
     LaunchedEffect(eventRepo, author, dTag, relayHints) {
         if (eventRepo.findAddressableEvent(30311, author, dTag) == null) {
@@ -1997,7 +1952,12 @@ private fun LiveStreamCard(
                 else Modifier
             )
     ) {
-        LiveStreamCardContent(event, streamUrl, image, title, summary, status, profile, author, onProfileClick)
+        if (event != null && !presentAtStart) {
+            // Arrived after the row was composed: same height as the loading line
+            QuoteArrivedLine(pictureUrl = profile?.picture, name = null, text = title ?: "Live Stream")
+        } else {
+            LiveStreamCardContent(event, streamUrl, image, title, summary, status, profile, author, onProfileClick)
+        }
     }
 }
 
@@ -2014,22 +1974,7 @@ private fun LiveStreamCardContent(
     onProfileClick: ((String) -> Unit)?
 ) {
         if (event == null) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(14.dp)
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.width(14.dp).height(14.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = "Loading stream...",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            QuoteLoadingLine("Loading stream...")
         } else {
             Column {
                 if (streamUrl != null) {
@@ -2050,7 +1995,7 @@ private fun LiveStreamCardContent(
                         blurPainter = blurPainter,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .let { if (ratio != null) it.aspectRatio(ratio) else it.heightIn(max = 180.dp) }
+                            .aspectRatio(ratio ?: (16f / 9f)) // no size given: a fixed 16:9 box, cropped
                             .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)),
                     )
                 }
@@ -2152,6 +2097,7 @@ private fun EmojiPackCard(
     }
 
     val emojiSet = remember(event) { event?.let { Nip30.parseEmojiSet(it) } }
+    val presentAtStart = rememberPresentAtStart(listOf(author, dTag), emojiSet != null)
 
     Surface(
         shape = RoundedCornerShape(12.dp),
@@ -2162,22 +2108,14 @@ private fun EmojiPackCard(
             .padding(vertical = 6.dp)
     ) {
         if (emojiSet == null) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(14.dp)
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.width(14.dp).height(14.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = "Loading emoji pack...",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            QuoteLoadingLine("Loading emoji pack...")
+        } else if (!presentAtStart) {
+            // Arrived after the row was composed: same height as the loading line
+            QuoteArrivedLine(
+                pictureUrl = profile?.picture,
+                name = null,
+                text = "${emojiSet.title} \u00b7 ${emojiSet.emojis.size} emojis"
+            )
         } else {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                 // Header: badge + title
@@ -2322,8 +2260,27 @@ private fun formatQuotedTimestamp(epoch: Long): String {
 }
 
 
-// Cache for HEAD-request content type lookups (shared across all instances)
-private val contentTypeCache = LruCache<String, String>(200)
+// Cache for HEAD-request content type lookups (shared across all instances). A failed probe
+// returns PROBE_FAILED_TYPE (shown as an image) and is not cached.
+internal val contentTypeCache = LruCache<String, String>(2000)
+internal const val PROBE_FAILED_TYPE = "application/x-wisp-probe-failed"
+
+/** HEAD-probe [url]'s content type into [contentTypeCache]. Blocking: call off the main thread. */
+internal fun probeContentType(url: String): String {
+    contentTypeCache.get(url)?.let { return it }
+    val type = try {
+        val request = Request.Builder().url(url).head().build()
+        HttpClientFactory.getShortTimeoutClient().newCall(request).execute().use { response ->
+            response.header("Content-Type")
+        }
+    } catch (_: Exception) {
+        null
+    } ?: PROBE_FAILED_TYPE
+    // A failed probe (offline, timed out) is not remembered: the next look tries again. The box
+    // stays the same size either way, so trying again moves nothing.
+    if (type != PROBE_FAILED_TYPE) contentTypeCache.put(url, type)
+    return type
+}
 
 private enum class ResolvedMediaType { IMAGE, VIDEO, LINK }
 
@@ -2334,38 +2291,34 @@ private fun UnknownMediaContent(
     onFullScreenVideo: (positionMs: Long) -> Unit
 ) {
     val url = meta.url
-    var resolved by remember(url) { mutableStateOf(contentTypeCache.get(url)?.let { classifyByMime(it) }) }
-    var loading by remember(url) { mutableStateOf(resolved == null) }
+    val cachedType = remember(url) { contentTypeCache.get(url) }
+    var resolved by remember(url) { mutableStateOf(cachedType?.let { classifyByMime(it) }) }
+    var loading by remember(url) { mutableStateOf(cachedType == null) }
+    // Unknown type at composition: the placeholder takes the box the media will most likely use, and
+    // whatever the probe finds is drawn inside that same box for the life of this composition.
+    val probeBox: Float? = remember(url) {
+        if (cachedType != null) null
+        else parseAspectRatio(meta.dimension) ?: measuredAspectRatios.get(url)
+            ?: measuredVideoRatios.get(url) ?: UNKNOWN_IMAGE_RATIO
+    }
 
     if (loading) {
         LaunchedEffect(url) {
-            val type = withContext(Dispatchers.IO) {
-                try {
-                    val request = Request.Builder().url(url).head().build()
-                    val client = HttpClientFactory.getShortTimeoutClient()
-                    client.newCall(request).execute().use { response ->
-                        response.header("Content-Type")
-                    }
-                } catch (_: Exception) {
-                    null
-                }
-            }
-            if (type != null) contentTypeCache.put(url, type)
-            resolved = type?.let { classifyByMime(it) }
+            val type = withContext(Dispatchers.IO) { probeContentType(url) }
+            resolved = classifyByMime(type)
             loading = false
         }
     }
 
     when {
         loading -> {
-            // Show a compact loading placeholder
+            // Placeholder in the media's box
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(200.dp)
-                    .padding(vertical = 4.dp)
+                    .aspectRatio(probeBox ?: UNKNOWN_IMAGE_RATIO)
                     .clip(RoundedCornerShape(12.dp))
             ) {
                 val blurPainter = rememberMediaPlaceholderPainter(meta.thumbhash, meta.blurhash, meta.dimension)
@@ -2387,18 +2340,28 @@ private fun UnknownMediaContent(
             }
         }
         resolved == "image" -> {
-            ImageWithContextMenu(meta = meta, onFullScreen = onFullScreenImage)
+            ImageWithContextMenu(meta = meta, onFullScreen = onFullScreenImage, boxRatio = probeBox)
         }
         resolved == "video" -> {
-            InlineVideoPlayerWithFullscreen(meta = meta, onFullScreen = onFullScreenVideo)
+            InlineVideoPlayerWithFullscreen(meta = meta, onFullScreen = onFullScreenVideo, boxRatio = probeBox)
         }
         resolved == "audio" -> {
             val ctx = LocalAudioPostContext.current
-            InlineAudioPlayer(meta = meta, authorPubkey = ctx.authorPubkey, eventRepo = ctx.eventRepo)
+            if (probeBox != null) {
+                // Resolved while on screen: the player sits centered in the box already there
+                Box(
+                    modifier = Modifier.fillMaxWidth().aspectRatio(probeBox),
+                    contentAlignment = Alignment.Center
+                ) {
+                    InlineAudioPlayer(meta = meta, authorPubkey = ctx.authorPubkey, eventRepo = ctx.eventRepo)
+                }
+            } else {
+                InlineAudioPlayer(meta = meta, authorPubkey = ctx.authorPubkey, eventRepo = ctx.eventRepo)
+            }
         }
         else -> {
             // Fallback: try loading as image (most blossom content is images)
-            ImageWithContextMenu(meta = meta, onFullScreen = onFullScreenImage)
+            ImageWithContextMenu(meta = meta, onFullScreen = onFullScreenImage, boxRatio = probeBox)
         }
     }
 }
@@ -2528,20 +2491,32 @@ private fun formatAudioTime(ms: Long): String {
 
 @kotlin.OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ImageWithContextMenu(meta: MediaMeta, onFullScreen: () -> Unit) {
+private fun ImageWithContextMenu(
+    meta: MediaMeta,
+    onFullScreen: () -> Unit,
+    /** Set when the caller already reserved a box for this image (it must be drawn inside it). */
+    boxRatio: Float? = null
+) {
     val url = meta.url
     val autoLoad = LocalMediaSettings.current.autoLoadMedia
-    var loaded by remember { mutableStateOf(autoLoad) }
+    var loaded by rememberSaveable(url) { mutableStateOf(autoLoad) }
     var showMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
 
+    // The box is fixed for this composition: the imeta size, else the ratio measured the last time
+    // this image loaded, else a 4:5 box with the image cropped into it. The measured ratio is recorded
+    // on load, so the next composition uses the real one.
+    val knownRatio = remember(meta.dimension, url) { parseAspectRatio(meta.dimension) ?: measuredAspectRatios.get(url) }
+    val ratio = boxRatio ?: knownRatio ?: UNKNOWN_IMAGE_RATIO
+    val exact = knownRatio != null && (boxRatio == null || boxRatio == knownRatio)
+
     if (!loaded) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(200.dp)
+                .aspectRatio(ratio)
                 .clip(RoundedCornerShape(12.dp))
                 .clickable { loaded = true },
             color = MaterialTheme.colorScheme.surfaceVariant
@@ -2577,23 +2552,20 @@ private fun ImageWithContextMenu(meta: MediaMeta, onFullScreen: () -> Unit) {
         return
     }
 
-    // Without imeta dim, fall back to the ratio measured the last time this image loaded, so a
-    // post scrolled back into view keeps its height instead of growing from the spinner size.
-    val ratio = remember(meta.dimension, url) { parseAspectRatio(meta.dimension) ?: measuredAspectRatios.get(url) }
     val blurPainter = rememberMediaPlaceholderPainter(meta.thumbhash, meta.blurhash, meta.dimension)
 
     Box {
         LoadingAsyncImage(
             model = url,
             contentDescription = "Image",
-            contentScale = ContentScale.FillWidth,
+            contentScale = if (exact) ContentScale.FillWidth else ContentScale.Crop,
             blurPainter = blurPainter,
             onClick = onFullScreen,
             onLongClick = { showMenu = true },
             onLoaded = { w, h -> if (w > 0 && h > 0) measuredAspectRatios.put(url, w.toFloat() / h) },
             modifier = Modifier
                 .fillMaxWidth()
-                .let { if (ratio != null) it.aspectRatio(ratio) else it }
+                .aspectRatio(ratio)
                 .clip(RoundedCornerShape(12.dp)),
         )
         DropdownMenu(
@@ -2620,18 +2592,26 @@ private fun ImageWithContextMenu(meta: MediaMeta, onFullScreen: () -> Unit) {
 
 @OptIn(UnstableApi::class)
 @Composable
-internal fun InlineVideoPlayerWithFullscreen(meta: MediaMeta, onFullScreen: (positionMs: Long) -> Unit) {
+internal fun InlineVideoPlayerWithFullscreen(
+    meta: MediaMeta,
+    onFullScreen: (positionMs: Long) -> Unit,
+    /** Set when the caller already reserved a box for this video (it is drawn inside it, uncapped). */
+    boxRatio: Float? = null
+) {
     val url = meta.url
     val mediaSettings = LocalMediaSettings.current
-    var loaded by remember { mutableStateOf(mediaSettings.autoLoadMedia) }
+    var loaded by rememberSaveable(url) { mutableStateOf(mediaSettings.autoLoadMedia) }
+    // The box is fixed for this composition (imeta size, else the size the player reported last
+    // time, else 16:9); the video is fitted inside it. The player's size is recorded for next time.
+    val videoBoxRatio = remember(url, meta.dimension, boxRatio) {
+        boxRatio ?: parseAspectRatio(meta.dimension) ?: measuredVideoRatios.get(url) ?: DEFAULT_VIDEO_RATIO
+    }
+    val capHeight = boxRatio == null
 
     if (!loaded) {
+        VideoBox(ratio = videoBoxRatio, capHeight = capHeight) {
         Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(200.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .clickable { loaded = true },
+            modifier = Modifier.fillMaxSize().clickable { loaded = true },
             color = MaterialTheme.colorScheme.surfaceVariant
         ) {
             val blurPainter = rememberMediaPlaceholderPainter(meta.thumbhash, meta.blurhash, meta.dimension)
@@ -2662,17 +2642,16 @@ internal fun InlineVideoPlayerWithFullscreen(meta: MediaMeta, onFullScreen: (pos
                 )
             }
         }
+        }
         return
     }
 
     // Show placeholder when this video is playing in PiP
     val pipState by PipController.pipState.collectAsState()
     if (pipState?.url == url) {
+        VideoBox(ratio = videoBoxRatio, capHeight = capHeight) {
         Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(200.dp)
-                .clip(RoundedCornerShape(12.dp)),
+            modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.surfaceVariant
         ) {
             val blurPainter = rememberMediaPlaceholderPainter(meta.thumbhash, meta.blurhash, meta.dimension)
@@ -2703,13 +2682,15 @@ internal fun InlineVideoPlayerWithFullscreen(meta: MediaMeta, onFullScreen: (pos
                 )
             }
         }
+        }
         return
     }
 
     val context = LocalContext.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
-    var videoAspectRatio by remember { mutableFloatStateOf(parseAspectRatio(meta.dimension) ?: (16f / 9f)) }
+    // The video's real shape, for the mini player only; layout uses videoBoxRatio.
+    var videoAspectRatio by remember { mutableFloatStateOf(videoBoxRatio) }
     val isMuted by globalMuted.collectAsState()
     var showControls by remember { mutableStateOf(false) }
     var userPaused by remember { mutableStateOf(false) }
@@ -2756,6 +2737,7 @@ internal fun InlineVideoPlayerWithFullscreen(meta: MediaMeta, onFullScreen: (pos
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 if (videoSize.width > 0 && videoSize.height > 0) {
                     videoAspectRatio = videoSize.width.toFloat() / videoSize.height.toFloat()
+                    measuredVideoRatios.put(url, videoAspectRatio)
                 }
             }
             override fun onIsPlayingChanged(playing: Boolean) {
@@ -2791,15 +2773,10 @@ internal fun InlineVideoPlayerWithFullscreen(meta: MediaMeta, onFullScreen: (pos
         }
     }
 
-    Box(
-        modifier = Modifier.fillMaxWidth(),
-        contentAlignment = Alignment.Center
-    ) {
-    Box(
+    VideoBox(
+        ratio = videoBoxRatio,
+        capHeight = capHeight,
         modifier = Modifier
-            .heightIn(max = 500.dp)
-            .aspectRatio(videoAspectRatio)
-            .clip(RoundedCornerShape(12.dp))
             .onGloballyPositioned { coordinates ->
                 val bounds = coordinates.boundsInWindow()
                 val viewHeight = view.height.toFloat()
@@ -2882,7 +2859,8 @@ internal fun InlineVideoPlayerWithFullscreen(meta: MediaMeta, onFullScreen: (pos
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    // Fitted (letterboxed) in the fixed box rather than resizing the row
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                     useController = true
                     controllerAutoShow = false
                     controllerShowTimeoutMs = 2000
@@ -3002,20 +2980,48 @@ internal fun InlineVideoPlayerWithFullscreen(meta: MediaMeta, onFullScreen: (pos
         }
         } // player != null
     }
-    } // centering wrapper
+}
+
+/**
+ * The fixed frame of an inline video: full width at [ratio], centered, at most 500dp tall when
+ * [capHeight]. The placeholder, the "Tap to load" card, the mini-player stand-in and the player all
+ * use it, so switching between them never changes the row's height.
+ */
+@Composable
+private fun VideoBox(
+    ratio: Float,
+    capHeight: Boolean = true,
+    modifier: Modifier = Modifier,
+    content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit
+) {
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .then(if (capHeight) Modifier.heightIn(max = 500.dp) else Modifier.fillMaxWidth())
+                .aspectRatio(ratio)
+                .clip(RoundedCornerShape(12.dp))
+                .then(modifier),
+            content = content
+        )
+    }
 }
 
 @OptIn(UnstableApi::class)
 @Composable
 private fun InlineVideoPlayer(url: String, modifier: Modifier = Modifier) {
     val mediaSettings = LocalMediaSettings.current
-    var loaded by remember { mutableStateOf(mediaSettings.autoLoadMedia) }
+    var loaded by rememberSaveable(url) { mutableStateOf(mediaSettings.autoLoadMedia) }
+    // Fixed for this composition; the player's reported size is recorded for the next one.
+    val videoBoxRatio = remember(url) { measuredVideoRatios.get(url) ?: DEFAULT_VIDEO_RATIO }
 
     if (!loaded) {
         Surface(
             modifier = modifier
                 .heightIn(max = 500.dp)
-                .aspectRatio(16f / 9f)
+                .aspectRatio(videoBoxRatio)
                 .clip(RoundedCornerShape(12.dp))
                 .clickable { loaded = true },
             color = MaterialTheme.colorScheme.surfaceVariant
@@ -3048,7 +3054,7 @@ private fun InlineVideoPlayer(url: String, modifier: Modifier = Modifier) {
         Surface(
             modifier = modifier
                 .heightIn(max = 500.dp)
-                .aspectRatio(16f / 9f)
+                .aspectRatio(videoBoxRatio)
                 .clip(RoundedCornerShape(12.dp)),
             color = MaterialTheme.colorScheme.surfaceVariant
         ) {
@@ -3076,7 +3082,7 @@ private fun InlineVideoPlayer(url: String, modifier: Modifier = Modifier) {
 
     val context = LocalContext.current
     val view = LocalView.current
-    var videoAspectRatio by remember { mutableFloatStateOf(16f / 9f) }
+    var videoAspectRatio by remember { mutableFloatStateOf(videoBoxRatio) }
     val isMuted by globalMuted.collectAsState()
     var showControls by remember { mutableStateOf(false) }
     var userPaused by remember { mutableStateOf(false) }
@@ -3119,6 +3125,7 @@ private fun InlineVideoPlayer(url: String, modifier: Modifier = Modifier) {
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 if (videoSize.width > 0 && videoSize.height > 0) {
                     videoAspectRatio = videoSize.width.toFloat() / videoSize.height.toFloat()
+                    measuredVideoRatios.put(url, videoAspectRatio)
                 }
             }
             override fun onIsPlayingChanged(playing: Boolean) {
@@ -3156,7 +3163,7 @@ private fun InlineVideoPlayer(url: String, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .heightIn(max = 500.dp)
-            .aspectRatio(videoAspectRatio)
+            .aspectRatio(videoBoxRatio)
             .onGloballyPositioned { coordinates ->
                 val bounds = coordinates.boundsInWindow()
                 val viewHeight = view.height.toFloat()
@@ -3220,7 +3227,8 @@ private fun InlineVideoPlayer(url: String, modifier: Modifier = Modifier) {
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    // Fitted (letterboxed) in the fixed box rather than resizing the row
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                     useController = true
                     controllerAutoShow = false
                     controllerShowTimeoutMs = 2000
@@ -3298,6 +3306,9 @@ private fun InlineVideoPlayer(url: String, modifier: Modifier = Modifier) {
     }
 }
 
+/** [parseAspectRatio] for other files in this package (GalleryCard has its own private one). */
+internal fun parseDimRatio(dim: String?): Float? = parseAspectRatio(dim)
+
 private fun parseAspectRatio(dim: String?): Float? {
     if (dim == null) return null
     val parts = dim.split('x')
@@ -3308,7 +3319,13 @@ private fun parseAspectRatio(dim: String?): Float? {
 }
 
 private val mediaPlaceholderCache = LruCache<String, BitmapPainter>(200)
-private val measuredAspectRatios = LruCache<String, Float>(500)
+/** Image width/height measured on load (or by [RowWarmup]), by URL, for images without an imeta size. */
+internal val measuredAspectRatios = LruCache<String, Float>(5000)
+/** Video width/height reported by the player, by URL, so the next composition starts at the real size. */
+internal val measuredVideoRatios = LruCache<String, Float>(2000)
+/** The box for an image (or unknown media) whose size isn't known yet: 4:5, cropped, like gallery tiles. */
+internal const val UNKNOWN_IMAGE_RATIO = 4f / 5f
+private const val DEFAULT_VIDEO_RATIO = 16f / 9f
 
 @Composable
 internal fun rememberMediaPlaceholderPainter(
@@ -3337,16 +3354,17 @@ internal fun rememberMediaPlaceholderPainter(
 
 // --- Link Preview (OG tags) ---
 
-private data class OgData(
+internal data class OgData(
     val title: String?,
     val description: String?,
     val image: String?,
     val siteName: String?
 )
 
-private val ogCache = LruCache<String, OgData>(200)
-private val ogRetryAfter = LruCache<String, Long>(200)
+internal val ogCache = LruCache<String, OgData>(1000)
+private val ogRetryAfter = LruCache<String, Long>(1000)
 private const val OG_RETRY_DELAY_MS = 5 * 60 * 1000L
+internal val LINK_PREVIEW_IMAGE_HEIGHT = 180.dp
 
 private val httpClient
     get() = com.wisp.app.relay.HttpClientFactory.getShortTimeoutClient()
@@ -3387,7 +3405,7 @@ private suspend fun fetchYoutubeOembed(url: String): OgData? = withContext(Dispa
     }
 }
 
-private suspend fun fetchOgData(url: String): OgData? = withContext(Dispatchers.IO) {
+internal suspend fun fetchOgData(url: String): OgData? = withContext(Dispatchers.IO) {
     ogCache.get(url)?.let { return@withContext it }
     val now = android.os.SystemClock.elapsedRealtime()
     if ((ogRetryAfter.get(url) ?: 0L) > now) return@withContext null
@@ -3514,16 +3532,19 @@ private fun decodeEntity(body: String, named: Map<String, String>): String? {
 
 @Composable
 private fun LinkPreview(url: String) {
-    var ogData by remember(url) { mutableStateOf(ogCache.get(url)) }
+    // The card only when its data is in memory as the row is composed. Data that arrives later
+    // renames the one-line link in place; the card shows the next time the row is composed.
+    val initialOg = remember(url) { ogCache.get(url) }
+    var lateOg by remember(url) { mutableStateOf<OgData?>(null) }
     val uriHandler = LocalUriHandler.current
 
     LaunchedEffect(url) {
-        if (ogData == null) {
-            ogData = fetchOgData(url)
+        if (initialOg == null) {
+            lateOg = fetchOgData(url)
         }
     }
 
-    val data = ogData
+    val data = initialOg
     if (data != null) {
         Surface(
             shape = RoundedCornerShape(12.dp),
@@ -3536,14 +3557,16 @@ private fun LinkPreview(url: String) {
         ) {
             Column {
                 data.image?.let { imageUrl ->
+                    // Fixed height so the card doesn't grow when the picture arrives
                     AsyncImage(
                         model = imageUrl,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 180.dp)
+                            .height(LINK_PREVIEW_IMAGE_HEIGHT)
                             .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
                     )
                 }
                 Column(modifier = Modifier.padding(12.dp)) {
@@ -3594,13 +3617,24 @@ private fun LinkPreview(url: String) {
             }
         }
     } else {
-        // Loading and failure use the same compact link, without a collapsing spacer.
+        // Loading and failure use the same compact link, without a collapsing spacer. Data that
+        // arrives while on screen replaces the words of this same line.
+        val late = lateOg
+        val label = remember(url, late) {
+            if (late == null) url
+            else {
+                val site = late.siteName?.takeIf { it.isNotBlank() } ?: try {
+                    Uri.parse(url).host?.removePrefix("www.")
+                } catch (_: Exception) { null }
+                listOfNotNull(site, late.title?.takeIf { it.isNotBlank() }).joinToString(" \u00b7 ").ifEmpty { url }
+            }
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
         ) {
             Text(
-                text = url,
+                text = label,
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.primary,
                 maxLines = 1,

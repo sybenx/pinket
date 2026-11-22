@@ -366,6 +366,9 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         else if (type == FeedType.RELAY || type == FeedType.TRENDING) relay else main
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /** Keeps the feed rows on screen in place while the feed changes; outlives the screen. */
+    val feedListHolder = com.wisp.app.ui.util.StableListHolder<NostrEvent>(keyOf = { it.id })
+
     val liveNowStreams: StateFlow<List<com.wisp.app.repo.LiveStream>> = liveStreamRepo.liveStreams
         .map { streams ->
             streams.values

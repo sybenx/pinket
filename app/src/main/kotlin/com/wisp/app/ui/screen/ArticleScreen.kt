@@ -1,5 +1,6 @@
 package com.wisp.app.ui.screen
 
+import com.wisp.app.ui.component.HeldRowsPill
 import com.wisp.app.nostr.Nip19
 import com.wisp.app.R
 import androidx.compose.ui.res.stringResource
@@ -43,6 +44,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import com.wisp.app.ui.util.bind
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -108,6 +110,10 @@ fun ArticleScreen(
     val hashtags by viewModel.hashtags.collectAsState()
     val comments by viewModel.comments.collectAsState()
     val isCommentsLoading by viewModel.isCommentsLoading.collectAsState()
+    // Comment rows on screen stay where they are while comments arrive.
+    val commentsHolder = viewModel.commentsHolder
+    val shownComments = commentsHolder.bind(source = comments)
+    com.wisp.app.ui.util.JumpLogger(commentsHolder.listState, "article")
 
     val reactionVersion by eventRepo.reactionVersion.collectAsState()
     val replyCountVersion by eventRepo.replyCountVersion.collectAsState()
@@ -194,7 +200,9 @@ fun ArticleScreen(
                 }
             }
             else -> {
+                Box(modifier = Modifier.fillMaxSize()) {
                 LazyColumn(
+                    state = commentsHolder.listState,
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(padding)
@@ -352,7 +360,7 @@ fun ArticleScreen(
                                 )
                             }
                         }
-                        if (isCommentsLoading && comments.isEmpty()) {
+                        if ((isCommentsLoading || comments.isNotEmpty()) && shownComments.isEmpty()) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -368,13 +376,13 @@ fun ArticleScreen(
                     }
 
                     // Comment items
-                    items(items = comments, key = { "comment_${it.key}" }, contentType = { "comment" }) { item ->
+                    items(items = shownComments, key = { "comment_${it.key}" }, contentType = { "comment" }) { item ->
                         if (item !is ThreadItem.Post) {
                             // Folded comment subtree — expand inline.
                             if (item is ThreadItem.CollapsedReplies) {
                                 CollapsedRepliesRow(
                                     item = item,
-                                    onExpand = { viewModel.expandBranch(item.anchor.id) },
+                                    onExpand = { commentsHolder.expectChange(); viewModel.expandBranch(item.anchor.id) },
                                     modifier = Modifier.animateItem()
                                 )
                             }
@@ -437,6 +445,8 @@ fun ArticleScreen(
                     }
 
                     item(key = "footer") { Spacer(Modifier.height(32.dp)) }
+                }
+                HeldRowsPill(commentsHolder, "New comments", Modifier.padding(padding))
                 }
             }
         }

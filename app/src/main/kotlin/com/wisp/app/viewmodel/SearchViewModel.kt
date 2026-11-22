@@ -95,6 +95,11 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
     private val _directMatch = MutableStateFlow<DirectMatch?>(null)
     val directMatch: StateFlow<DirectMatch?> = _directMatch
 
+    // Result rows on screen stay where they are while more results arrive; these outlive the
+    // screen, so coming back from a result lands on the same row.
+    val notesHolder = com.wisp.app.ui.util.StableListHolder<NostrEvent>(keyOf = { it.id })
+    val usersHolder = com.wisp.app.ui.util.StableListHolder<ProfileData>(keyOf = { it.pubkey })
+
     private var searchJob: Job? = null
     private var directJob: Job? = null
     private var authorSearchJob: Job? = null
@@ -292,6 +297,9 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
         _isSearching.value = true
         _users.value = emptyList()
         _notes.value = emptyList()
+        // A new search starts at the top.
+        notesHolder.listState.requestScrollToItem(0)
+        usersHolder.listState.requestScrollToItem(0)
 
         _searchedQuery.value = query.trim()
         val direct = SearchQueryParser.parse(query)

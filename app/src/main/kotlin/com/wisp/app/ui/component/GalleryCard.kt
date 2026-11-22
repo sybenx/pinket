@@ -57,6 +57,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -163,7 +164,8 @@ fun GalleryCard(
     val contentWarning = remember(event.id) {
         event.tags.firstOrNull { it.size >= 1 && it[0] == "content-warning" }
     }
-    var contentRevealed by remember { mutableStateOf(false) }
+    // Taps in this row survive it scrolling off and back (LazyColumn keeps saveable state per key)
+    var contentRevealed by rememberSaveable(event.id) { mutableStateOf(false) }
 
     // Parse media entries
     val imageEntries = remember(event.id) { Nip68.parseImetaEntries(event) }
@@ -241,7 +243,11 @@ fun GalleryCard(
         event.tags.firstOrNull { it.size >= 2 && it[0] == "client" }?.get(1)
     }
     val hasReactionDetails = reactionDetails.isNotEmpty() || zapDetails.isNotEmpty() || repostDetails.isNotEmpty()
-    var expandedDetails by remember { mutableStateOf(false) }
+    var expandedDetails by rememberSaveable(event.id) { mutableStateOf(false) }
+    // Engagement that wasn't there when the row was composed doesn't add lines to it now; counts in
+    // the action bar still update, and the lines show the next time the row is composed.
+    val repostHeaderAtStart = remember(event.id) { repostPubkeys.isNotEmpty() }
+    val zapBannerAtStart = remember(event.id) { zapDetails.isNotEmpty() }
 
     var fullScreenInitialPage by remember { mutableIntStateOf(-1) }
 
@@ -252,7 +258,7 @@ fun GalleryCard(
             .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
         // Repost banner — matches PostCard exactly
-        if (repostPubkeys.isNotEmpty()) {
+        if (repostPubkeys.isNotEmpty() && repostHeaderAtStart) {
             val maxAvatars = 10
             val displayPubkeys = repostPubkeys.take(maxAvatars)
             val overflow = repostPubkeys.size - maxAvatars
@@ -611,7 +617,7 @@ fun GalleryCard(
         }
 
         // Top zapper banner
-        if (zapDetails.isNotEmpty()) {
+        if (zapDetails.isNotEmpty() && zapBannerAtStart) {
             val topZap = remember(zapDetails) {
                 zapDetails.maxByOrNull { it.sats }
             }

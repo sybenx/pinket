@@ -29,6 +29,10 @@ import com.wisp.app.nostr.Nip29
 import com.wisp.app.repo.EventRepository
 import com.wisp.app.repo.GroupPreview
 
+/** Last preview seen per "relay|group" in this process, so the next composition starts complete. */
+private val groupPreviewMemo = android.util.LruCache<String, GroupPreview>(500)
+private val MEMBERS_ROW_HEIGHT = 20.dp
+
 @Composable
 fun GroupCard(
     relayUrl: String,
@@ -39,12 +43,27 @@ fun GroupCard(
     onFetchPreview: (suspend (String, String) -> GroupPreview?)? = null,
     eventRepo: EventRepository? = null
 ) {
-    var metadata by remember(relayUrl, groupId) { mutableStateOf(initialMetadata) }
-    var members by remember(relayUrl, groupId) { mutableStateOf(initialMembers) }
+    val memoKey = "$relayUrl|$groupId"
+    // Seeded from the last preview this process saw, so a card scrolled back into view starts complete.
+    val memo = remember(memoKey) { groupPreviewMemo.get(memoKey) }
+    var metadata by remember(relayUrl, groupId) { mutableStateOf(initialMetadata ?: memo?.metadata) }
+    var members by remember(relayUrl, groupId) {
+        mutableStateOf(initialMembers.ifEmpty { memo?.members ?: emptyList() })
+    }
+    // Decided at composition and kept: the members line is reserved unless a finished preview said
+    // there are none, and the "about" line shows only if it was known from the start.
+    val reserveMembers = remember(memoKey) { members.isNotEmpty() || (memo == null && onFetchPreview != null) }
+    val aboutAtStart = remember(memoKey) { !metadata?.about.isNullOrEmpty() }
 
     LaunchedEffect(relayUrl, groupId) {
         if ((metadata == null || members.isEmpty()) && onFetchPreview != null) {
-            val preview = onFetchPreview(relayUrl, groupId) ?: return@LaunchedEffect
+            val preview = onFetchPreview(relayUrl, groupId)
+            if (preview == null) {
+                // Remember the miss too, so the next composition doesn't reserve a line for nothing
+                if (groupPreviewMemo.get(memoKey) == null) groupPreviewMemo.put(memoKey, GroupPreview(null, emptyList()))
+                return@LaunchedEffect
+            }
+            groupPreviewMemo.put(memoKey, preview)
             if (metadata == null) metadata = preview.metadata
             if (members.isEmpty()) members = preview.members
         }
@@ -83,7 +102,7 @@ fun GroupCard(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(top = 2.dp)
                     )
-                    metadata?.about?.takeIf { it.isNotEmpty() }?.let { about ->
+                    metadata?.about?.takeIf { it.isNotEmpty() && aboutAtStart }?.let { about ->
                         Text(
                             text = about,
                             style = MaterialTheme.typography.bodySmall,
@@ -95,11 +114,18 @@ fun GroupCard(
                     }
                 }
             }
-            if (members.isNotEmpty()) {
+            if (members.isEmpty() && reserveMembers) {
+                // Members not known yet: keep their line's height so they fill it when they arrive
+                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(MEMBERS_ROW_HEIGHT))
+            } else if (members.isNotEmpty() && reserveMembers) {
                 Spacer(Modifier.height(8.dp))
                 val displayed = members.take(6)
                 val overflow = members.size - displayed.size
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.height(MEMBERS_ROW_HEIGHT)
+                ) {
                     Box(
                         modifier = Modifier
                             .height(20.dp)

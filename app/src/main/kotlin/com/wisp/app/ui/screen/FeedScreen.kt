@@ -67,6 +67,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
+import com.wisp.app.ui.util.bind
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -215,7 +216,8 @@ fun FeedScreen(
     val statusVersion by viewModel.eventRepo.statusVersion.collectAsState()
     val connectedCount by viewModel.relayPool.connectedCount.collectAsState()
     val liveNowStreams by viewModel.liveNowStreams.collectAsState()
-    val listState = rememberLazyListState()
+    val feedHolder = viewModel.feedListHolder
+    val listState = feedHolder.listState
 
     var handledScrollTrigger by rememberSaveable { mutableStateOf(scrollToTopTrigger) }
     LaunchedEffect(scrollToTopTrigger) {
@@ -223,8 +225,10 @@ fun FeedScreen(
             handledScrollTrigger = scrollToTopTrigger
             // Re-tapping Home scrolls to the top; tapping it again once there refreshes.
             if (listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0) {
+                feedHolder.syncNow()
                 viewModel.refreshFeed()
             } else {
+                feedHolder.syncNow()
                 listState.scrollToItem(0)
             }
         }
@@ -262,6 +266,24 @@ fun FeedScreen(
             listState.scrollToItem(0)
         }
     }
+    // Rows on screen stay where they are while the feed behind them changes.
+    val shownFeed = feedHolder.bind(
+        source = feed,
+        context = listOf(
+            userPubkey, feedType, selectedList?.dTag, selectedRelay, selectedRelaySet?.name,
+            trendingWindow, trendingMode, contentFilter
+        )
+    )
+    com.wisp.app.ui.util.JumpLogger(listState, "feed")
+    com.wisp.app.ui.component.WarmRowsAhead(
+        listState = listState,
+        rows = shownFeed,
+        upcoming = feed,
+        eventRepo = viewModel.eventRepo,
+        autoTranslate = viewModel.interfacePrefs.isAutoTranslate(),
+        keyOf = { it.id },
+        eventOf = { it }
+    )
     val ownLists by viewModel.listRepo.ownLists.collectAsState()
     var showRelayPicker by remember { mutableStateOf(false) }
     var showListPicker by remember { mutableStateOf(false) }
@@ -349,9 +371,9 @@ fun FeedScreen(
             onNoteClick = { eventId -> onQuotedNoteClick?.invoke(eventId) },
             onAddToList = onAddToList,
             onFollowAuthor = { pubkey -> viewModel.toggleFollow(pubkey) },
-            onBlockAuthor = { pubkey -> viewModel.blockUser(pubkey) },
+            onBlockAuthor = { pubkey -> feedHolder.expectChange(); viewModel.blockUser(pubkey) },
             onPin = { eventId -> viewModel.togglePin(eventId) },
-            onDelete = { eventId, kind -> viewModel.deleteEvent(eventId, kind) },
+            onDelete = { eventId, kind -> feedHolder.expectChange(); viewModel.deleteEvent(eventId, kind) },
             isFollowing = { pubkey -> viewModel.contactRepo.isFollowing(pubkey) },
             userPubkey = userPubkey,
             nip05Repo = viewModel.nip05Repo,
@@ -1089,7 +1111,10 @@ fun FeedScreen(
                         onFollowAll = { viewModel.followAll(it) },
                         onRetry = { viewModel.setTrendingMode(TrendingMode.USERS) }
                     )
-                } else if (feed.isEmpty()) {
+                } else if (feed.isNotEmpty() && shownFeed.isEmpty()) {
+                    // The first posts of a load are gathered and shown together.
+                    FeedSkeleton()
+                } else if (feed.isEmpty() && shownFeed.isEmpty()) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
@@ -1168,7 +1193,7 @@ fun FeedScreen(
                 } else {
                     PullToRefreshBox(
                         isRefreshing = isRefreshing,
-                        onRefresh = { viewModel.refreshFeed() },
+                        onRefresh = { feedHolder.syncNow(); viewModel.refreshFeed() },
                         modifier = Modifier.fillMaxSize()
                     ) {
                         LazyColumn(
@@ -1184,7 +1209,7 @@ fun FeedScreen(
                                     )
                                 }
                             }
-                            items(items = feed, key = { it.id }, contentType = { if (it.kind == 30023) "article" else "post" }) { event ->
+                            items(items = shownFeed, key = { it.id }, contentType = { if (it.kind == 30023) "article" else "post" }) { event ->
                                 val itemOnReply = { onReply(event) }
                                 val itemOnProfileClick = { onProfileClick(event.pubkey) }
                                 val itemOnNoteClick = { onNoteClick(event) }
@@ -1214,7 +1239,7 @@ fun FeedScreen(
                                     onZap = itemOnZap,
                                     onAddToList = itemOnAddToList,
                                     onPin = { viewModel.togglePin(event.id) },
-                                    onDelete = { viewModel.deleteEvent(event.id, event.kind) },
+                                    onDelete = { feedHolder.expectChange(); viewModel.deleteEvent(event.id, event.kind) },
                                     onRelayClick = { url ->
                                         viewModel.setSelectedRelay(url)
                                         viewModel.setFeedType(FeedType.RELAY)
@@ -1243,11 +1268,11 @@ fun FeedScreen(
 
                         // Keys exclude headers/loaders and stay correct when the displayed feed changes.
                         LaunchedEffect(
-                            listState, viewModel, feed, feedType, contentFilter,
+                            listState, viewModel, shownFeed, feedType, contentFilter,
                             selectedList, selectedRelay, selectedRelaySet,
                             trendingWindow, trendingMode
                         ) {
-                            val eventIds = feed.mapTo(HashSet()) { it.id }
+                            val eventIds = shownFeed.mapTo(HashSet()) { it.id }
                             snapshotFlow {
                                 val layout = listState.layoutInfo
                                 layout.visibleItemsInfo.mapNotNull { item ->
@@ -1265,11 +1290,14 @@ fun FeedScreen(
                         }
 
                         NewNotesButton(
-                            visible = newNoteCount > 0 && !newNotesButtonHidden,
-                            count = newNoteCount,
+                            // New posts waiting under the live row at the very top count too.
+                            visible = (newNoteCount > 0 && !newNotesButtonHidden) || feedHolder.heldAbove > 0,
+                            count = maxOf(newNoteCount, feedHolder.heldAbove),
+                            showAtTop = feedHolder.heldAbove > 0,
                             listState = listState,
                             onClick = {
                                 scope.launch {
+                                    feedHolder.syncNow()
                                     listState.scrollToItem(0)
                                     viewModel.resetNewNoteCount()
                                 }
@@ -1418,9 +1446,10 @@ private fun FeedItem(
         if (event.kind == 6969) viewModel.eventRepo.getUserZapPollVote(event.id) else null
     }
     val onFollowAuthorCb = { viewModel.toggleFollow(event.pubkey) }
-    val onBlockAuthorCb = { viewModel.blockUser(event.pubkey) }
+    val onBlockAuthorCb = { viewModel.feedListHolder.expectChange(); viewModel.blockUser(event.pubkey) }
     val onMuteThreadCb = {
         val rootId = Nip10.getRootId(event) ?: Nip10.getReplyTarget(event) ?: event.id
+        viewModel.feedListHolder.expectChange()
         viewModel.muteThread(rootId)
     }
     val onTranslateCb = { viewModel.translateEvent(event) }
@@ -2351,7 +2380,8 @@ private fun NewNotesButton(
     listState: androidx.compose.foundation.lazy.LazyListState,
     onClick: () -> Unit,
     onHide: (permanent: Boolean) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    showAtTop: Boolean = false
 ) {
     var showMenu by remember { mutableStateOf(false) }
     // Read scroll state inside this scope so start/stop recomposes only the button,
@@ -2367,7 +2397,7 @@ private fun NewNotesButton(
     )
 
     androidx.compose.animation.AnimatedVisibility(
-        visible = visible && !atTop,
+        visible = visible && (!atTop || showAtTop),
         enter = slideInVertically { -it },
         exit = slideOutVertically { -it },
         modifier = modifier.graphicsLayer { alpha = buttonAlpha }

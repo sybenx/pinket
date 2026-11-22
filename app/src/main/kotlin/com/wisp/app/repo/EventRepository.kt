@@ -298,6 +298,10 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
     fun observeAddressableEvent(kind: Int, author: String, dTag: String): Flow<NostrEvent?> =
         addressObservations.observe(addressKey(kind, author, dTag))
 
+    /** Memory-only addressable lookup (newest visible) — safe to call from composition. */
+    fun peekAddressableEvent(kind: Int, author: String, dTag: String): NostrEvent? =
+        synchronized(this) { addressSnapshot(addressKey(kind, author, dTag)) }
+
     /** Newest visible event for [key], from the capped index or still in [eventCache]. */
     private fun addressSnapshot(key: String): NostrEvent? {
         addressIndex[key]?.takeIf(::isVisible)?.let { return it }
@@ -1079,7 +1083,12 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
     }
 
     fun getEvent(id: String): NostrEvent? {
-        val event = eventCache[id] ?: eventPersistence?.getEvent(id)?.also { eventCache[id] = it }
+        val event = eventCache[id] ?: eventPersistence?.getEvent(id)?.also {
+            eventCache[id] = it
+            // A disk hit must wake observers the way a relay arrival does; otherwise a quote card
+            // waiting on this id stays on "Loading note..." (requestQuotedEvent sees it cached and stops).
+            trackIncoming(it)
+        }
         if (event != null && muteRepo?.isBlocked(event.pubkey) == true) return null
         return event
     }

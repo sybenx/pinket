@@ -1,5 +1,6 @@
 package com.wisp.app.ui.screen
 
+import com.wisp.app.ui.component.HeldRowsPill
 import com.wisp.app.ui.theme.WispThemeColors
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -27,7 +28,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -78,8 +78,11 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -87,6 +90,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import com.wisp.app.ui.util.bind
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -424,6 +428,53 @@ fun UserProfileScreen(
         }
     }
 
+    // Rows on screen stay where they are while notes arrive; each tab keeps its own position.
+    val displayNotes = if (notesSortMode == ProfileSortMode.RECENCY) rootNotes else sortedNotes
+    val displayReplies = if (repliesSortMode == ProfileSortMode.RECENCY) replies else sortedReplies
+    val shownNotes = viewModel.notesHolder.bind(source = displayNotes, context = profilePubkey to notesSortMode)
+    val shownReplies = viewModel.repliesHolder.bind(source = displayReplies, context = profilePubkey to repliesSortMode)
+    val shownConversation = viewModel.conversationHolder.bind(source = conversationNotes, context = profilePubkey)
+    val heldRowsHolder = when (selectedTabId) {
+        0 -> viewModel.notesHolder
+        1 -> viewModel.repliesHolder
+        8 -> viewModel.conversationHolder
+        else -> null
+    }
+
+    // Deleting, blocking or muting is a change the reader asked for: show it at once.
+    val onDeleteHeld: (String, Int) -> Unit = { id, kind -> viewModel.expectListChange(); onDeleteEvent(id, kind) }
+    val onBlockUserHeld: (() -> Unit)? = onBlockUser?.let { block -> { viewModel.expectListChange(); block() } }
+    val onMuteUserHeld: (() -> Unit)? = onMuteUser?.let { mute -> { viewModel.expectListChange(); mute() } }
+
+    // Pinned notes sit above the notes and often resolve after them. A change to the pinned
+    // section waits while its place and a note row are both on screen, so it never pushes the
+    // notes being read; it goes in once that place has scrolled away, when the reader pins or
+    // unpins a note, or the next time the screen is opened.
+    val pinnedNow = pinnedIds.mapNotNull { id -> eventRepo?.getEvent(id) }
+        .sortedByDescending { it.created_at }
+    var shownPinned by remember(profilePubkey) { mutableStateOf(pinnedNow) }
+    var pinChangeUntil by remember { mutableLongStateOf(0L) }
+    val onTogglePinHeld: (String) -> Unit = { id ->
+        pinChangeUntil = android.os.SystemClock.uptimeMillis() + 3_000L
+        onTogglePin(id)
+    }
+    val notesListState = viewModel.notesHolder.listState
+    val pinnedPlaceBusy by remember(notesListState) {
+        derivedStateOf {
+            // Header and tab strip are items 0 and 1; then the pinned label and pinned notes.
+            val firstNoteIndex = 2 + if (shownPinned.isEmpty()) 0 else shownPinned.size + 1
+            val lastVisible = notesListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            viewModel.notesHolder.shown.isNotEmpty() &&
+                notesListState.firstVisibleItemIndex < firstNoteIndex &&
+                lastVisible >= firstNoteIndex
+        }
+    }
+    if (pinnedNow.map { it.id } != shownPinned.map { it.id }) {
+        val pinsFree = selectedTabId != 0 || !pinnedPlaceBusy ||
+            android.os.SystemClock.uptimeMillis() < pinChangeUntil
+        if (pinsFree) SideEffect { shownPinned = pinnedNow }
+    }
+
     var blockedContentRevealed by remember { mutableStateOf(false) }
     var fullScreenMediaImageUrl by remember { mutableStateOf<String?>(null) }
     var fullScreenMediaVideoUrl by remember { mutableStateOf<String?>(null) }
@@ -517,7 +568,7 @@ fun UserProfileScreen(
                                     text = { Text(stringResource(R.string.profile_block)) },
                                     onClick = {
                                         menuExpanded = false
-                                        onBlockUser?.invoke()
+                                        onBlockUserHeld?.invoke()
                                     }
                                 )
                             }
@@ -549,7 +600,8 @@ fun UserProfileScreen(
                 .distinctBy { it.url }
         }
 
-        val listState = rememberLazyListState()
+        val listState = viewModel.listStateForTab(selectedTabId)
+        com.wisp.app.ui.util.JumpLogger(listState, "profile")
 
         // Auto-load more when scrolling near the bottom of the notes/replies/media feeds
         val autoPaginates = selectedTabId == 0 || selectedTabId == 1 ||
@@ -575,6 +627,7 @@ fun UserProfileScreen(
             }
         }
 
+        Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -617,6 +670,7 @@ fun UserProfileScreen(
                                     text = { Text(stringResource(mode.labelResId)) },
                                     onClick = {
                                         showSortDropdown = false
+                                        viewModel.expectListChange()
                                         if (selectedTabId == 0) viewModel.setNotesSortMode(mode)
                                         else viewModel.setRepliesSortMode(mode)
                                     },
@@ -630,7 +684,7 @@ fun UserProfileScreen(
                 }
             } else null
 
-            item {
+            item(key = "profile_header", contentType = "profile_header") {
                 @Suppress("UNUSED_EXPRESSION")
                 nip05Version
                 ProfileHeader(
@@ -650,13 +704,13 @@ fun UserProfileScreen(
                     followedBy = followedBy,
                     followsYou = !isOwnProfile && userPubkey != null && followList.any { it.pubkey == userPubkey },
                     isBlocked = isBlocked,
-                    onMuteUser = onMuteUser,
+                    onMuteUser = onMuteUserHeld,
                     onUnmuteUser = onUnblockUser,
                     sortContent = sortButtonContent
                 )
             }
 
-            stickyHeader {
+            stickyHeader(key = "profile_tabs", contentType = "profile_tabs") {
                 // Tab strip uses `background` (true near-black) instead of
                 // `surface` so the chrome reads as part of the body and
                 // doesn't stack two distinct grey tiers — matches iOS.
@@ -731,10 +785,9 @@ fun UserProfileScreen(
                     item { BlockedContentOverlay(onReveal = { blockedContentRevealed = true }) }
                 } else {
                     // Pinned notes at the top of the Notes tab
-                    val pinnedEvents = pinnedIds.mapNotNull { id -> eventRepo?.getEvent(id) }
-                        .sortedByDescending { it.created_at }
+                    val pinnedEvents = shownPinned
                     if (pinnedEvents.isNotEmpty()) {
-                        item {
+                        item(key = "pinned_label", contentType = "pinned_label") {
                             Text(
                                 stringResource(R.string.profile_pinned),
                                 style = MaterialTheme.typography.labelMedium,
@@ -742,7 +795,7 @@ fun UserProfileScreen(
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                             )
                         }
-                        items(items = pinnedEvents, key = { "pinned-${it.id}" }) { event ->
+                        items(items = pinnedEvents, key = { "pinned-${it.id}" }, contentType = { "post" }) { event ->
                             val eventProfile = eventRepo?.getProfileData(event.pubkey)
                             val pinnedTranslationState by remember(event.id) {
                                 translationRepo?.stateFor(event.id) ?: kotlinx.coroutines.flow.flowOf(com.wisp.app.repo.TranslationState())
@@ -778,9 +831,9 @@ fun UserProfileScreen(
                                 eventRepo = eventRepo,
                                 onAddToList = { onAddNoteToList(event.id) },
                                 isInList = event.id in listedIds,
-                                onPin = { onTogglePin(event.id) },
+                                onPin = { onTogglePinHeld(event.id) },
                                 isPinned = true,
-                                onDelete = { onDeleteEvent(event.id, event.kind) },
+                                onDelete = { onDeleteHeld(event.id, event.kind) },
                                 isOwnEvent = event.pubkey == userPubkey,
                                 translationState = pinnedTranslationState,
                                 onTranslate = { translationRepo?.translate(event) },
@@ -801,7 +854,6 @@ fun UserProfileScreen(
                         }
                     }
 
-                    val displayNotes = if (notesSortMode == ProfileSortMode.RECENCY) rootNotes else sortedNotes
                     if (notesSortMode != ProfileSortMode.RECENCY && sortedNotes.isEmpty() && sortedNotesLoading) {
                         item {
                             Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxWidth().padding(32.dp)) {
@@ -810,10 +862,17 @@ fun UserProfileScreen(
                         }
                     } else if (notesSortMode != ProfileSortMode.RECENCY && sortedNotes.isEmpty() && !sortedNotesLoading) {
                         item { FeedCrawlingMessage() }
-                    } else if (displayNotes.isEmpty() && pinnedEvents.isEmpty()) {
+                    } else if (shownNotes.isEmpty() && displayNotes.isNotEmpty()) {
+                        // The first notes of a load are gathered and shown together.
+                        item(key = "notes_gathering", contentType = "loading") { GatheringRow() }
+                    } else if (shownNotes.isEmpty() && pinnedEvents.isEmpty()) {
                         item { EmptyTabContent(stringResource(R.string.profile_no_notes)) }
                     } else {
-                        items(items = displayNotes, key = { it.id }) { event ->
+                        items(
+                            items = shownNotes,
+                            key = { it.id },
+                            contentType = { if (isGalleryEvent(it)) "gallery" else "post" }
+                        ) { event ->
                             val likeCount = reactionVersion.let { eventRepo?.getReactionCount(event.id) ?: 0 }
                             val replyCount = replyCountVersion.let { eventRepo?.getReplyCount(event.id) ?: 0 }
                             val repostCount = repostVersion.let { eventRepo?.getRepostCount(event.id) ?: 0 }
@@ -888,15 +947,15 @@ fun UserProfileScreen(
                                     relayIcons = relayIcons,
                                     onNavigateToProfileFromDetails = onNavigateToProfile,
                                     onFollowAuthor = { onToggleFollow?.invoke(event.pubkey) },
-                                    onBlockAuthor = { onBlockUser?.invoke() },
+                                    onBlockAuthor = { onBlockUserHeld?.invoke() },
                                     isFollowingAuthor = contactRepo.isFollowing(event.pubkey),
                                     isOwnEvent = event.pubkey == userPubkey,
                                     nip05Repo = nip05Repo,
                                     onAddToList = { onAddNoteToList(event.id) },
                                     isInList = event.id in listedIds,
-                                    onPin = { onTogglePin(event.id) },
+                                    onPin = { onTogglePinHeld(event.id) },
                                     isPinned = event.id in pinnedIds,
-                                    onDelete = { onDeleteEvent(event.id, event.kind) },
+                                    onDelete = { onDeleteHeld(event.id, event.kind) },
                                     resolvedEmojis = resolvedEmojis,
                                     unicodeEmojis = unicodeEmojis,
                                     onOpenEmojiLibrary = onOpenEmojiLibrary,
@@ -933,15 +992,15 @@ fun UserProfileScreen(
                                 relayIcons = relayIcons,
                                 onNavigateToProfileFromDetails = onNavigateToProfile,
                                 onFollowAuthor = { onToggleFollow?.invoke(event.pubkey) },
-                                onBlockAuthor = { onBlockUser?.invoke() },
+                                onBlockAuthor = { onBlockUserHeld?.invoke() },
                                 isFollowingAuthor = contactRepo.isFollowing(event.pubkey),
                                 isOwnEvent = event.pubkey == userPubkey,
                                 nip05Repo = nip05Repo,
                                 onAddToList = { onAddNoteToList(event.id) },
                                 isInList = event.id in listedIds,
-                                onPin = { onTogglePin(event.id) },
+                                onPin = { onTogglePinHeld(event.id) },
                                 isPinned = event.id in pinnedIds,
-                                onDelete = { onDeleteEvent(event.id, event.kind) },
+                                onDelete = { onDeleteHeld(event.id, event.kind) },
                                 translationState = rootTranslationState,
                                 onTranslate = { translationRepo?.translate(event) },
                                 autoTranslate = autoTranslate,
@@ -1037,7 +1096,6 @@ fun UserProfileScreen(
                 1 -> if (isBlocked && !blockedContentRevealed) {
                     item { BlockedContentOverlay(onReveal = { blockedContentRevealed = true }) }
                 } else {
-                    val displayReplies = if (repliesSortMode == ProfileSortMode.RECENCY) replies else sortedReplies
                     if (repliesSortMode != ProfileSortMode.RECENCY && sortedReplies.isEmpty() && sortedRepliesLoading) {
                         item {
                             Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxWidth().padding(32.dp)) {
@@ -1046,10 +1104,12 @@ fun UserProfileScreen(
                         }
                     } else if (repliesSortMode != ProfileSortMode.RECENCY && sortedReplies.isEmpty() && !sortedRepliesLoading) {
                         item { FeedCrawlingMessage() }
-                    } else if (displayReplies.isEmpty()) {
+                    } else if (shownReplies.isEmpty() && displayReplies.isNotEmpty()) {
+                        item(key = "replies_gathering", contentType = "loading") { GatheringRow() }
+                    } else if (shownReplies.isEmpty()) {
                         item { EmptyTabContent(stringResource(R.string.profile_no_replies)) }
                     } else {
-                        items(items = displayReplies, key = { it.id }) { event ->
+                        items(items = shownReplies, key = { it.id }, contentType = { "post" }) { event ->
                             val likeCount = reactionVersion.let { eventRepo?.getReactionCount(event.id) ?: 0 }
                             val replyCount = replyCountVersion.let { eventRepo?.getReplyCount(event.id) ?: 0 }
                             val repostCount2 = repostVersion.let { eventRepo?.getRepostCount(event.id) ?: 0 }
@@ -1117,15 +1177,15 @@ fun UserProfileScreen(
                                 relayIcons = relayIcons,
                                 onNavigateToProfileFromDetails = onNavigateToProfile,
                                 onFollowAuthor = { onToggleFollow?.invoke(event.pubkey) },
-                                onBlockAuthor = { onBlockUser?.invoke() },
+                                onBlockAuthor = { onBlockUserHeld?.invoke() },
                                 isFollowingAuthor = contactRepo.isFollowing(event.pubkey),
                                 isOwnEvent = event.pubkey == userPubkey,
                                 nip05Repo = nip05Repo,
                                 onAddToList = { onAddNoteToList(event.id) },
                                 isInList = event.id in listedIds,
-                                onPin = { onTogglePin(event.id) },
+                                onPin = { onTogglePinHeld(event.id) },
                                 isPinned = event.id in pinnedIds,
-                                onDelete = { onDeleteEvent(event.id, event.kind) },
+                                onDelete = { onDeleteHeld(event.id, event.kind) },
                                 translationState = replyTranslationState,
                                 onTranslate = { translationRepo?.translate(event) },
                                 autoTranslate = autoTranslate,
@@ -1151,10 +1211,12 @@ fun UserProfileScreen(
                     }
                 }
                 8 -> {
-                    if (conversationNotes.isEmpty()) {
+                    if (shownConversation.isEmpty() && conversationNotes.isNotEmpty()) {
+                        item(key = "conversation_gathering", contentType = "loading") { GatheringRow() }
+                    } else if (shownConversation.isEmpty()) {
                         item { EmptyTabContent(stringResource(R.string.profile_no_conversation)) }
                     } else {
-                        items(items = conversationNotes, key = { it.id }) { event ->
+                        items(items = shownConversation, key = { it.id }, contentType = { "post" }) { event ->
                             val likeCount = reactionVersion.let { eventRepo?.getReactionCount(event.id) ?: 0 }
                             val replyCount = replyCountVersion.let { eventRepo?.getReplyCount(event.id) ?: 0 }
                             val repostCount = repostVersion.let { eventRepo?.getRepostCount(event.id) ?: 0 }
@@ -1302,6 +1364,8 @@ fun UserProfileScreen(
                     }
                 }
             }
+        }
+        HeldRowsPill(heldRowsHolder, "New posts", Modifier.padding(padding))
         }
     }
 }
@@ -2018,6 +2082,14 @@ private fun EmptyTabContent(message: String) {
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+/** Stands in for a tab's notes while the first ones of a load are gathered. */
+@Composable
+private fun GatheringRow() {
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxWidth().padding(32.dp)) {
+        CircularProgressIndicator()
     }
 }
 

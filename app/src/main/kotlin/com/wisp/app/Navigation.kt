@@ -1163,7 +1163,10 @@ fun WispNavHost(
             val pubkey = backStackEntry.arguments?.getString("pubkey") ?: return@composable
             val isOwnProfile = pubkey == feedViewModel.getUserPubkey()
             val userProfileViewModel: UserProfileViewModel = viewModel()
-            LaunchedEffect(pubkey) {
+            // Started before the first frame, not after it: what is already in memory (name, bio,
+            // who follows them) is then part of that frame, so the header does not grow under
+            // the posts a moment later.
+            remember(pubkey) {
                 userProfileViewModel.loadProfile(
                     pubkey = pubkey,
                     eventRepo = feedViewModel.eventRepo,

@@ -23,13 +23,13 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.outlined.AlternateEmail
@@ -70,6 +70,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -133,6 +134,9 @@ import com.wisp.app.ui.component.ProfilePicture
 import com.wisp.app.ui.theme.WispThemeColors
 import com.wisp.app.viewmodel.NotificationFilter
 import com.wisp.app.viewmodel.NotificationsViewModel
+import com.wisp.app.viewmodel.rowKey
+import com.wisp.app.ui.theme.cornerRim
+import com.wisp.app.ui.util.bind
 import com.wisp.app.ui.theme.wispSwitchColors
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -200,7 +204,12 @@ fun NotificationsScreen(
     val chatRoomsEnabled by viewModel.chatRoomsEnabled.collectAsState()
     val summary by viewModel.summary24h.collectAsState()
     val eventRepo = viewModel.eventRepository
-    val listState = rememberLazyListState()
+    // Rows on screen stay where they are while notifications arrive. New ones that belong above
+    // the rows being read wait at the top until asked for (the "New notifications" pill).
+    val listHolder = viewModel.listHolder
+    val listState = listHolder.listState
+    val shownNotifications = listHolder.bind(source = notifications, context = userPubkey)
+    com.wisp.app.ui.util.JumpLogger(listState, "notifications")
     var showFilterSheet by remember { mutableStateOf(false) }
     val profileVersion = eventRepo?.profileVersion?.collectAsState()?.value ?: 0
 
@@ -264,8 +273,8 @@ fun NotificationsScreen(
             onQuote = onQuote,
             onZap = onZap,
             onFollowToggle = onFollowToggle,
-            onBlockUser = onBlockUser,
-            onMuteThread = onMuteThread,
+            onBlockUser = { listHolder.expectChange(); onBlockUser(it) },
+            onMuteThread = { listHolder.expectChange(); onMuteThread(it) },
             onAddToList = onAddToList,
             nip05Repo = nip05Repo,
             isZapAnimating = isZapAnimating,
@@ -304,6 +313,7 @@ fun NotificationsScreen(
     LaunchedEffect(scrollToTopTrigger) {
         if (scrollToTopTrigger != handledScrollTrigger) {
             handledScrollTrigger = scrollToTopTrigger
+            listHolder.syncNow()
             listState.scrollToItem(0)
         }
     }
@@ -377,7 +387,7 @@ fun NotificationsScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-        if (notifications.isEmpty()) {
+        if (notifications.isEmpty() && shownNotifications.isEmpty()) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -401,6 +411,7 @@ fun NotificationsScreen(
                         summary = summary,
                         enabledTypes = enabledTypes,
                         onFilterSelect = { filter ->
+                            listHolder.expectChange()
                             if (enabledTypes == setOf(filter)) {
                                 viewModel.enableAll()
                             } else {
@@ -409,7 +420,7 @@ fun NotificationsScreen(
                         }
                     )
                 }
-                itemsIndexed(items = notifications, key = { _, it -> it.id }, contentType = { _, _ -> "notification" }) { index, item ->
+                itemsIndexed(items = shownNotifications, key = { _, it -> it.rowKey() }, contentType = { _, _ -> "notification" }) { index, item ->
                     val isExpanded = viewModel.isRowExpanded(item, feedStyle, collapsedIds, expandedId)
                     val itemIndex = index + 1 // +1 for summary header
                     val coroutineScope = rememberCoroutineScope()
@@ -453,7 +464,7 @@ fun NotificationsScreen(
                                 kotlinx.coroutines.delay(300)
                                 // Find how tall this item is in the current layout
                                 val itemInfo = listState.layoutInfo.visibleItemsInfo
-                                    .firstOrNull { it.key == item.id }
+                                    .firstOrNull { it.key == item.rowKey() }
                                 val itemHeight = itemInfo?.size ?: 0
                                 // Visible height after keyboard takes ~half the screen
                                 val visibleHeight = listState.layoutInfo.viewportSize.height
@@ -476,6 +487,21 @@ fun NotificationsScreen(
                 }
             }
         }
+        val atTop by remember(listState) { derivedStateOf { listState.firstVisibleItemIndex == 0 } }
+        if (listHolder.held > 0 && atTop) {
+            val pillScope = rememberCoroutineScope()
+            NewNotificationsPill(
+                onClick = {
+                    pillScope.launch {
+                        listHolder.syncNow()
+                        listState.scrollToItem(0)
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 8.dp)
+            )
+        }
         } // PullToRefreshBox
     }
 
@@ -483,12 +509,38 @@ fun NotificationsScreen(
         NotificationFilterSheet(
             enabledTypes = enabledTypes,
             chatRoomsEnabled = chatRoomsEnabled,
-            onToggleType = { viewModel.toggleType(it) },
-            onToggleChatRooms = { viewModel.toggleChatRooms() },
-            onEnableAll = { viewModel.enableAll() },
-            onDisableAll = { viewModel.disableAll() },
+            onToggleType = { listHolder.expectChange(); viewModel.toggleType(it) },
+            onToggleChatRooms = { listHolder.expectChange(); viewModel.toggleChatRooms() },
+            onEnableAll = { listHolder.expectChange(); viewModel.enableAll() },
+            onDisableAll = { listHolder.expectChange(); viewModel.disableAll() },
             onDismiss = { showFilterSheet = false }
         )
+    }
+}
+
+/** Shown at the top while new notifications wait above the ones being read. */
+@Composable
+private fun NewNotificationsPill(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
+        shadowElevation = 4.dp,
+        modifier = modifier.cornerRim(WispThemeColors.hintColor, MaterialTheme.colorScheme.primary)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.KeyboardArrowUp,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(Modifier.width(4.dp))
+            Text("New notifications", style = MaterialTheme.typography.labelMedium)
+        }
     }
 }
 

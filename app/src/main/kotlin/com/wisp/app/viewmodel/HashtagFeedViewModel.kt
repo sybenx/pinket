@@ -36,6 +36,12 @@ class HashtagFeedViewModel(app: Application) : AndroidViewModel(app) {
     private val _setName = MutableStateFlow<String?>(null)
     val setName: StateFlow<String?> = _setName
 
+    /** Keeps the rows on screen in place while notes arrive; outlives the screen. */
+    val listHolder = com.wisp.app.ui.util.StableListHolder<NostrEvent>(keyOf = { it.id })
+
+    /** The tags whose notes are in [notes], so coming back to the screen does not start over. */
+    private var loadedTags: List<String> = emptyList()
+
     private var relayPoolRef: RelayPool? = null
     private var eventRepoRef: EventRepository? = null
     private var outboxRouterRef: OutboxRouter? = null
@@ -86,8 +92,15 @@ class HashtagFeedViewModel(app: Application) : AndroidViewModel(app) {
         loadJob?.cancel()
         relayPoolRef?.let { closeAllSubs(it) }
 
+        // Coming back to the same tags (from a thread or a profile) keeps the notes already here
+        // and adds whatever is new, instead of emptying the list and starting at the top again.
+        val sameTags = tags == loadedTags && _notes.value.isNotEmpty()
+        loadedTags = tags
         _hashtag.value = displayTag
-        _notes.value = emptyList()
+        if (!sameTags) {
+            if (_notes.value.isNotEmpty()) listHolder.listState.requestScrollToItem(0)
+            _notes.value = emptyList()
+        }
         _isLoading.value = true
         relayPoolRef = relayPool
         eventRepoRef = eventRepo
@@ -109,7 +122,7 @@ class HashtagFeedViewModel(app: Application) : AndroidViewModel(app) {
 
         val currentNoteSub = noteSub
 
-        val seenIds = mutableSetOf<String>()
+        val seenIds = _notes.value.mapTo(mutableSetOf()) { it.id }
 
         loadJob = viewModelScope.launch {
             val eventJob = launch {

@@ -48,6 +48,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -106,6 +107,15 @@ import java.util.Locale
 private val mediaExtensions = setOf("mp4", "mov", "webm", "mp3", "wav", "ogg", "m4a", "flac", "aac", "jpg", "jpeg", "png", "gif", "webp")
 private val mediaMimePrefixes = listOf("video/", "audio/", "image/")
 private val contentUrlRegex = Regex("""https?://\S+""")
+
+/** PostCard's default onTranslate: identifies cards whose screen doesn't wire translation state. */
+private val NoTranslateCallback: () -> Unit = {}
+
+private val translationInProgress = setOf(
+    TranslationStatus.IDENTIFYING_LANGUAGE,
+    TranslationStatus.DOWNLOADING_MODEL,
+    TranslationStatus.TRANSLATING
+)
 
 private fun contentHasMedia(content: String, imetaMap: Map<String, MediaMeta>): Boolean {
     // Check imeta tags for video/audio
@@ -178,7 +188,7 @@ fun PostCard(
     userZapPollVote: Int? = null,
     onZapPollVote: (Int) -> Unit = {},
     translationState: TranslationState = TranslationState(),
-    onTranslate: () -> Unit = {},
+    onTranslate: () -> Unit = NoTranslateCallback,
     autoTranslate: Boolean = false,
     quoteDepth: Int = 0,
     modifier: Modifier = Modifier,
@@ -202,17 +212,39 @@ fun PostCard(
     val contentWarning = remember(event.id) {
         event.tags.firstOrNull { it.size >= 1 && it[0] == "content-warning" }
     }
-    var contentRevealed by remember { mutableStateOf(false) }
+    // Taps in this row survive it scrolling off and back (LazyColumn keeps saveable state per key)
+    var contentRevealed by rememberSaveable(event.id) { mutableStateOf(false) }
 
     val clientName = remember(event.id) {
         event.tags.firstOrNull { it.size >= 2 && it[0] == "client" }?.get(1)
     }
 
     val hasReactionDetails = reactionDetails.isNotEmpty() || zapDetails.isNotEmpty() || repostDetails.isNotEmpty()
-    var expandedDetails by remember { mutableStateOf(false) }
+    var expandedDetails by rememberSaveable(event.id) { mutableStateOf(false) }
     // Translated posts show the translation in place; the original is a tap away.
-    var showTranslation by remember(event.id) { mutableStateOf(true) }
+    var showTranslation by rememberSaveable(event.id) { mutableStateOf(true) }
     val translationRepo = LocalTranslationRepository.current
+
+    // Translation never resizes a row by itself: the state seen when the row is composed (or the hint
+    // the repository can already promise) is what this composition shows. A result that arrives later
+    // shows the next time the row is composed. A tap in this row switches to the live state.
+    val firstTranslation = remember(event.id) {
+        // Only where the screen shows live translation state (it passes its own onTranslate)
+        if (translationState.status == TranslationStatus.IDLE && event.kind != 30023 &&
+            onTranslate !== NoTranslateCallback
+        ) {
+            translationRepo?.peekHint(event, autoTranslate) ?: translationState
+        } else translationState
+    }
+    var translationTapped by rememberSaveable(event.id) { mutableStateOf(false) }
+    // Work already under way when composed was started by a tap in this row earlier.
+    val translationLive = translationTapped || firstTranslation.status in translationInProgress
+    val shownTranslation = if (translationLive) translationState else firstTranslation
+
+    // Engagement that wasn't there when the row was composed doesn't add lines to it now; the
+    // counts in the action bar still update, and the lines show the next time the row is composed.
+    val repostHeaderAtStart = remember(event.id) { repostPubkeys.isNotEmpty() }
+    val zapBannerAtStart = remember(event.id) { zapDetails.isNotEmpty() }
 
     // On screen: translate it, or leave a hint, if it isn't in a language you read. Scrolling away cancels.
     LaunchedEffect(event.id, autoTranslate, translationRepo) {
@@ -249,7 +281,7 @@ fun PostCard(
             } else Modifier)
             .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        if (repostPubkeys.isNotEmpty()) {
+        if (repostPubkeys.isNotEmpty() && repostHeaderAtStart) {
             val maxAvatars = 10
             val displayPubkeys = remember(repostPubkeys) { repostPubkeys.take(maxAvatars) }
             val overflow = repostPubkeys.size - maxAvatars
@@ -526,24 +558,23 @@ fun PostCard(
                             clipboardManager.setText(AnnotatedString(event.toJson()))
                         }
                     )
-                    val translating = translationState.status == TranslationStatus.IDENTIFYING_LANGUAGE ||
-                        translationState.status == TranslationStatus.DOWNLOADING_MODEL ||
-                        translationState.status == TranslationStatus.TRANSLATING
+                    val translating = shownTranslation.status in translationInProgress
                     DropdownMenuItem(
                         text = {
                             Text(
                                 when {
-                                    translationState.status == TranslationStatus.DONE && showTranslation -> stringResource(R.string.translate_show_original)
-                                    translationState.status == TranslationStatus.DONE && !showTranslation -> stringResource(R.string.translate_show_translation)
-                                    translationState.status == TranslationStatus.SAME_LANGUAGE -> stringResource(R.string.translate_same_language)
+                                    shownTranslation.status == TranslationStatus.DONE && showTranslation -> stringResource(R.string.translate_show_original)
+                                    shownTranslation.status == TranslationStatus.DONE && !showTranslation -> stringResource(R.string.translate_show_translation)
+                                    shownTranslation.status == TranslationStatus.SAME_LANGUAGE -> stringResource(R.string.translate_same_language)
                                     else -> stringResource(R.string.translate_translate)
                                 }
                             )
                         },
-                        enabled = !translating && translationState.status != TranslationStatus.SAME_LANGUAGE,
+                        enabled = !translating && shownTranslation.status != TranslationStatus.SAME_LANGUAGE,
                         onClick = {
                             menuExpanded = false
-                            if (translationState.status == TranslationStatus.DONE) {
+                            translationTapped = true
+                            if (shownTranslation.status == TranslationStatus.DONE) {
                                 showTranslation = !showTranslation
                             } else {
                                 onTranslate()
@@ -622,14 +653,15 @@ fun PostCard(
                 contentHasMedia(event.content, imetaMap)
             }
 
-            val bodyContent = if (translationState.status == TranslationStatus.DONE && showTranslation &&
-                translationState.translatedText.isNotEmpty()) translationState.translatedText else event.content
+            val bodyContent = if (shownTranslation.status == TranslationStatus.DONE && showTranslation &&
+                shownTranslation.translatedText.isNotEmpty()) shownTranslation.translatedText else event.content
             if (event.kind != 30023) {
                 TranslationLine(
-                    state = translationState,
+                    state = shownTranslation,
                     showTranslation = showTranslation,
-                    onToggle = { showTranslation = !showTranslation },
+                    onToggle = { translationTapped = true; showTranslation = !showTranslation },
                     onTranslateFrom = { code, keep ->
+                        translationTapped = true
                         showTranslation = true
                         translationRepo?.translateFrom(event, code, keep)
                     },
@@ -658,27 +690,16 @@ fun PostCard(
                     quoteDepth = quoteDepth
                 )
             } else {
-                // Collapsible content with max height (~1 viewport)
+                // Collapsible content with max height (~1 viewport). Whether it overflows (and so
+                // gets the button) is decided in the same measure pass, so the button never appears
+                // a frame after the text.
                 val collapsedMaxHeight = 500.dp
-                var contentExpanded by remember { mutableStateOf(startExpanded) }
-                var contentExceedsMax by remember { mutableStateOf(false) }
-                val density = LocalDensity.current
+                var contentExpanded by rememberSaveable(event.id) { mutableStateOf(startExpanded) }
 
-                Box {
-                    Box(
-                        modifier = Modifier
-                            .then(
-                                if (!contentExpanded) Modifier.heightIn(max = collapsedMaxHeight) else Modifier
-                            )
-                            .clipToBounds()
-                            .onGloballyPositioned { coordinates ->
-                                if (!contentExpanded) {
-                                    val maxPx = with(density) { collapsedMaxHeight.toPx() }
-                                    contentExceedsMax = coordinates.size.height >= maxPx.toInt()
-                                }
-                            },
-                        contentAlignment = Alignment.TopStart
-                    ) {
+                CappedContent(
+                    cap = collapsedMaxHeight,
+                    expanded = contentExpanded,
+                    content = {
                         RichContent(
                             content = bodyContent,
                             style = MaterialTheme.typography.bodyLarge,
@@ -691,13 +712,11 @@ fun PostCard(
                             noteActions = noteActions,
                             quoteDepth = quoteDepth
                         )
-                    }
-
-                    // Gradient fade overlay when collapsed and content overflows
-                    if (contentExceedsMax && !contentExpanded) {
+                    },
+                    fade = {
+                        // Gradient fade overlay when collapsed and content overflows
                         Box(
                             modifier = Modifier
-                                .align(Alignment.BottomCenter)
                                 .fillMaxWidth()
                                 .height(80.dp)
                                 .background(
@@ -709,21 +728,18 @@ fun PostCard(
                                     )
                                 )
                         )
+                    },
+                    toggle = {
+                        // A post that opens in full (the one a thread was opened on) has no button.
+                        if (!startExpanded) TextButton(onClick = { contentExpanded = !contentExpanded }) {
+                            Text(
+                                text = if (contentExpanded) stringResource(R.string.translate_show_less) else stringResource(R.string.translate_show_more),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
-                }
-
-                if (contentExceedsMax) {
-                    TextButton(
-                        onClick = { contentExpanded = !contentExpanded },
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
-                    ) {
-                        Text(
-                            text = if (contentExpanded) stringResource(R.string.translate_show_less) else stringResource(R.string.translate_show_more),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
+                )
             }
 
             // Hide button to re-collapse CW content
@@ -762,7 +778,7 @@ fun PostCard(
             }
 
             // Top zapper banner
-            if (zapDetails.isNotEmpty()) {
+            if (zapDetails.isNotEmpty() && zapBannerAtStart) {
                 val topZap = remember(zapDetails) {
                     zapDetails.maxByOrNull { it.sats }
                 }
@@ -961,8 +977,20 @@ private fun PollSection(
                     }
                 }
             }
+            // Reserve the results' "N votes" line so switching to results doesn't add height
+            ReservedPollLine(topPadding = 4.dp)
         }
     }
+}
+
+/** An invisible line the height of a poll's summary line, so results mode doesn't grow the row. */
+@Composable
+private fun ReservedPollLine(topPadding: androidx.compose.ui.unit.Dp) {
+    Text(
+        text = " ",
+        style = MaterialTheme.typography.labelSmall,
+        modifier = Modifier.padding(top = topPadding)
+    )
 }
 
 @Composable
@@ -1129,6 +1157,12 @@ private fun ZapPollSection(
                     onClick = { onVote(option.index) }
                 )
             }
+            // Reserve the results' total and min/max lines so switching to results doesn't add height
+            ReservedPollLine(topPadding = 4.dp)
+            val hasConstraint = remember(event.id) {
+                Nip69.parseValueMinimum(event) != null || Nip69.parseValueMaximum(event) != null
+            }
+            if (hasConstraint) ReservedPollLine(topPadding = 2.dp)
         }
     }
 }

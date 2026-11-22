@@ -96,6 +96,9 @@ class ThreadViewModel : ViewModel() {
     private val pendingMetadataIds = mutableSetOf<String>()
     private var metadataBatchIndex = 0
 
+    /** Keeps the rows on screen in place while replies arrive; outlives the screen. */
+    val listHolder = com.wisp.app.ui.util.StableListHolder<ThreadItem>(showFirstAtOnce = true, keyOf = { it.key })
+
     fun clearScrollTarget() {
         _scrollToIndex.value = -1
         scrollTargetId = null
@@ -543,7 +546,9 @@ class ThreadViewModel : ViewModel() {
             rootEvent = root,
             parentToChildren = parentToChildren,
             expandedIds = expandedIds,
-            scrollTargetId = scrollTargetId,
+            // The opened note's branch stays unfolded for as long as the thread is open, not only
+            // until the first scroll to it: folding it later made the note being read disappear.
+            scrollTargetId = scrollTargetId ?: seedEventId?.takeIf { it != rootId },
             // Fan-out ("show more replies") cap lands with its UI toggle in a follow-up.
             maxSiblingsInline = Int.MAX_VALUE
         )

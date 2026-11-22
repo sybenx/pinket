@@ -220,6 +220,34 @@ class TranslationRepository(
         }
     }
 
+    /**
+     * Read-only, synchronous: the "Translate from X" hint [lookAt] would leave on [event], when that is already
+     * certain without detection (the post's language tag or the author's remembered language, and a model
+     * that is known to be missing or auto-translate off). Null when it can't tell yet. Lets a card show the
+     * hint from its first frame instead of adding the line a moment later. Never publishes anything.
+     */
+    fun peekHint(event: NostrEvent, autoTranslate: Boolean): TranslationState? {
+        if (event.content.isBlank() || event.pubkey == myPubkey()) return null
+        if (getState(event.id).status != TranslationStatus.IDLE) return null
+        return try {
+            val lang = PostLanguage.tagged(event.tags) ?: authors.get(event.pubkey) ?: return null
+            val target = TranslationPreferences.target()
+            val server = serverOn()
+            val have = models
+            val plan = TranslationPlan.decide(
+                guess = PostLanguage.Guess.known(lang),
+                reads = prefs.reads() + target,
+                autoTranslate = autoTranslate,
+                supported = OnDeviceTranslator::supported,
+                // Unknown model list: assume it could translate at once, so no hint is promised.
+                ready = { server || have == null || OnDeviceTranslator.ready(it, target, have) }
+            )
+            (plan as? TranslationPlan.Hint)?.let { hint(it.from) }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun hint(from: String) = TranslationState(
         status = TranslationStatus.HINT,
         sourceCode = from,

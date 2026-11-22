@@ -30,9 +30,11 @@ internal fun rememberProfile(
 internal fun rememberObservedEvent(eventRepo: EventRepository?, eventId: String?): NostrEvent? {
     if (eventRepo == null || eventId == null) return null
     return key(eventRepo, eventId) {
+        // Seeded from memory so a cached event is there on the first frame, not one frame later.
+        val initial = remember(eventRepo, eventId) { eventRepo.peekEvent(eventId) }
         val event by remember(eventRepo, eventId) {
             eventRepo.observeEvent(eventId)
-        }.collectAsState(initial = null)
+        }.collectAsState(initial = initial)
         event
     }
 }
@@ -45,9 +47,17 @@ internal fun rememberAddressableEvent(
     dTag: String
 ): NostrEvent? {
     return key(eventRepo, kind, author, dTag) {
+        val initial = remember(eventRepo, kind, author, dTag) { eventRepo.peekAddressableEvent(kind, author, dTag) }
         val event by remember(eventRepo, kind, author, dTag) {
             eventRepo.observeAddressableEvent(kind, author, dTag)
-        }.collectAsState(initial = null)
+        }.collectAsState(initial = initial)
         event
     }
 }
+
+/**
+ * Whether [present] was true the first time this call site composed for [key]. A card that started
+ * without its data keeps its placeholder size when the data arrives later in the same composition.
+ */
+@Composable
+internal fun rememberPresentAtStart(key: Any?, present: Boolean): Boolean = remember(key) { present }

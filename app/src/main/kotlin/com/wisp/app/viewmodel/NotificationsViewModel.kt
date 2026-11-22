@@ -57,6 +57,12 @@ enum class NotificationFilter(val labelResId: Int) {
     DMS(R.string.filter_dms)
 }
 
+/**
+ * The list key of a notification row. A row of folded zaps from one sender is keyed by its oldest
+ * zap, which stays the same when newer zaps join the row (the newest one is the row's [id]).
+ */
+fun FlatNotificationItem.rowKey(): String = mergedZaps.lastOrNull()?.id ?: id
+
 class NotificationsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val settingsPrefs = app.getSharedPreferences("wisp_settings", Context.MODE_PRIVATE)
@@ -112,6 +118,12 @@ class NotificationsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _filteredFlatNotifications = MutableStateFlow<List<FlatNotificationItem>>(emptyList())
     val filteredFlatNotifications: StateFlow<List<FlatNotificationItem>> = _filteredFlatNotifications
+
+    /** Keeps the notification rows on screen in place while new ones arrive; outlives the screen. */
+    val listHolder = com.wisp.app.ui.util.StableListHolder<FlatNotificationItem>(
+        showFirstAtOnce = true,
+        keyOf = { it.rowKey() }
+    )
 
     private var notifRepo: NotificationRepository? = null
     private var eventRepo: EventRepository? = null

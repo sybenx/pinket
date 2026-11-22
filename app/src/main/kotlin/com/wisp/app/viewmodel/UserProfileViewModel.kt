@@ -129,6 +129,28 @@ class UserProfileViewModel(app: Application) : AndroidViewModel(app) {
     private val _groupsLoading = MutableStateFlow(false)
     val groupsLoading: StateFlow<Boolean> = _groupsLoading
 
+    // Each tab keeps its own list position, and the note rows on screen stay where they are while
+    // notes arrive. These outlive the screen, so coming back from a note lands on the same row.
+    val notesHolder = com.wisp.app.ui.util.StableListHolder<NostrEvent>(keyOf = { it.id })
+    val repliesHolder = com.wisp.app.ui.util.StableListHolder<NostrEvent>(keyOf = { it.id })
+    val conversationHolder = com.wisp.app.ui.util.StableListHolder<NostrEvent>(keyOf = { it.id })
+    private val otherTabListStates = mutableMapOf<Int, androidx.compose.foundation.lazy.LazyListState>()
+
+    /** The list position of a profile tab, by tab id (0 notes, 1 replies, 8 conversation, ...). */
+    fun listStateForTab(tabId: Int): androidx.compose.foundation.lazy.LazyListState = when (tabId) {
+        0 -> notesHolder.listState
+        1 -> repliesHolder.listState
+        8 -> conversationHolder.listState
+        else -> otherTabListStates.getOrPut(tabId) { androidx.compose.foundation.lazy.LazyListState() }
+    }
+
+    /** The reader is about to change a list themselves (delete, block, mute): show it at once. */
+    fun expectListChange() {
+        notesHolder.expectChange()
+        repliesHolder.expectChange()
+        conversationHolder.expectChange()
+    }
+
     private var targetPubkey: String = ""
     private var eventRepoRef: EventRepository? = null
     private var localPublicationJob: Job? = null
