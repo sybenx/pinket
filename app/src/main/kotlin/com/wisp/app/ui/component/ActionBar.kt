@@ -129,8 +129,11 @@ fun ActionBar(
                     .combinedClickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = androidx.compose.material3.ripple(bounded = false, radius = 24.dp),
-                        onClick = { showEmojiPicker = true },
-                        onLongClick = { onReact("") }
+                        // Tap sends the plain heart; once reacted, a tap does
+                        // nothing so a stray touch cannot add or undo one.
+                        // Long press opens the emoji picker.
+                        onClick = { if (userReactionEmojis.isEmpty()) onReact("") },
+                        onLongClick = { showEmojiPicker = true }
                     )
             ) {
                 val displayEmoji = userReactionEmojis.firstOrNull()
