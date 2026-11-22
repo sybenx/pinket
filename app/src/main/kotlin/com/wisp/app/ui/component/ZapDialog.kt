@@ -51,6 +51,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,6 +61,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -81,7 +83,10 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
+import androidx.compose.ui.unit.isUnspecified
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.wisp.app.R
@@ -1048,6 +1053,7 @@ private fun MoneroContent(
             // Amount pills in XMR, then the custom "+" entry, all on one row.
             // The amount pills share the width; the custom amount itself shows
             // in the field below, so the "+" pill stays one small size.
+            val pillFontSize = remember { mutableStateOf(TextUnit.Unspecified) }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1063,7 +1069,8 @@ private fun MoneroContent(
                             isCustom = false
                         },
                         modifier = Modifier.weight(1f),
-                        horizontalPadding = 4.dp
+                        horizontalPadding = 4.dp,
+                        fitFontSize = pillFontSize
                     )
                 }
                 Surface(
@@ -1317,9 +1324,19 @@ private fun PresetPill(
     accent: Color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    horizontalPadding: Dp = 18.dp
+    horizontalPadding: Dp = 18.dp,
+    /**
+     * Label size shared by a row of pills. When given, the labels shrink
+     * together until each one fits (narrow screens, large text) instead of
+     * being cut off.
+     */
+    fitFontSize: MutableState<TextUnit>? = null
 ) {
     val onAccent = inkOrWhite(accent)
+    val baseStyle = MaterialTheme.typography.labelLarge
+    val textStyle = fitFontSize?.value?.takeIf { it.isSpecified }
+        ?.let { baseStyle.copy(fontSize = it) } ?: baseStyle
+    var fitted by remember(label) { mutableStateOf(fitFontSize == null) }
     Surface(
         modifier = modifier.clickable(onClick = onClick),
         shape = CircleShape,
@@ -1327,13 +1344,26 @@ private fun PresetPill(
     ) {
         Text(
             label,
-            style = MaterialTheme.typography.labelLarge,
+            style = textStyle,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             color = if (selected) onAccent else MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
             maxLines = 1,
             softWrap = false,
-            modifier = Modifier.padding(horizontal = horizontalPadding, vertical = 8.dp)
+            onTextLayout = { result ->
+                if (fitFontSize == null) return@Text
+                val size = textStyle.fontSize
+                if (result.didOverflowWidth && size.value > 9f) {
+                    val next = size * 0.92f
+                    val shared = fitFontSize.value
+                    if (shared.isUnspecified || next.value < shared.value) fitFontSize.value = next
+                } else {
+                    fitted = true
+                }
+            },
+            modifier = Modifier
+                .padding(horizontal = horizontalPadding, vertical = 8.dp)
+                .drawWithContent { if (fitted) drawContent() }
         )
     }
 }
