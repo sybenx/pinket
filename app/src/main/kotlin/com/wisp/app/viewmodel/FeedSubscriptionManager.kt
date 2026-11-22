@@ -1421,6 +1421,7 @@ class FeedSubscriptionManager(
             relayPool.relayEvents.collect { re ->
                 if (re.subscriptionId == subId && gen == forYouGeneration) {
                     eventRepo.addEvent(re.event)
+                    eventRepo.addEventRelay(re.event.id, re.relayUrl)
                     eventRepo.requestProfileIfMissing(re.event.pubkey)
                 }
             }
@@ -1442,6 +1443,7 @@ class FeedSubscriptionManager(
             relayPool.relayEvents.collect { re ->
                 if (re.subscriptionId == subId && gen == forYouGeneration && re.event.kind == 1) {
                     eventRepo.addEvent(re.event)
+                    eventRepo.addEventRelay(re.event.id, re.relayUrl)
                     eventRepo.requestProfileIfMissing(re.event.pubkey)
                 }
             }
