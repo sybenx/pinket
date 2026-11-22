@@ -78,6 +78,20 @@ class SpamVotesTest {
         assertEquals(listOf(bob, alice), s.all.map { it.key })
     }
 
+    @Test fun `undoing a person also undoes what that tap said about the post`() {
+        val vote = SpamVotesSnapshot.spamRows(alice, fp, "Alice", "text", 7L)
+        val other = SpamVote(Type.DOMAIN, "other.example", true, createdAt = 3L)
+        val all = vote + other + SpamVote(Type.AUTHOR, bob, false, createdAt = 7L)
+        assertEquals(
+            setOf(Type.AUTHOR to alice, Type.TEXT to "hash1", Type.DOMAIN to "scam.example"),
+            SpamVotesRepository.undoKeys(all, Type.AUTHOR, alice).toSet()
+        )
+        // A text or link vote is undone alone.
+        assertEquals(listOf(Type.TEXT to "hash1"), SpamVotesRepository.undoKeys(all, Type.TEXT, "hash1"))
+        // A "Not spam" on someone else at the same second touches nothing of this vote.
+        assertEquals(listOf(Type.AUTHOR to bob), SpamVotesRepository.undoKeys(all, Type.AUTHOR, bob))
+    }
+
     // ---- reports from follows ----
 
     private fun report(by: String, vararg tags: List<String>, kind: Int = 1984, id: String = "id-$by-${tags.size}") =
