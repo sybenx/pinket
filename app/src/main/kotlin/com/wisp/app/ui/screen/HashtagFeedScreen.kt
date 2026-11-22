@@ -357,6 +357,7 @@ private fun HashtagFeedItem(
         hasUserReposted = hasUserReposted,
         repostCount = repostCount,
         onZap = { noteActions.onZap(event) },
+        moneroTips = true,
         hasUserZapped = hasUserZapped,
         likeCount = likeCount,
         replyCount = replyCount,

@@ -50,6 +50,7 @@ import com.wisp.app.ui.component.NotifBlipSound
 import com.wisp.app.ui.component.BottomTab
 import com.wisp.app.ui.component.WispBottomBar
 import com.wisp.app.ui.component.ZapDialog
+import com.wisp.app.ui.component.rememberPayOptions
 import com.wisp.app.ui.component.pendingEmojiReactCallback
 import com.wisp.app.ui.component.AuthApprovalDialog
 import com.wisp.app.ui.screen.BlossomServersScreen
@@ -1378,7 +1379,8 @@ fun WispNavHost(
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
                     canPrivateZap = feedViewModel.hasLocalKeypair && userHasDmRelays && recipientHasDmRelays,
                     recipientPubkey = searchZapTarget?.pubkey,
-                    profileLookup = { feedViewModel.profileRepo.get(it) }
+                    profileLookup = { feedViewModel.profileRepo.get(it) },
+                    payOptions = rememberPayOptions(feedViewModel.eventRepo, zapRecipient)
                 )
             }
             SearchScreen(
@@ -2031,7 +2033,8 @@ fun WispNavHost(
                     canPrivateZap = feedViewModel.hasLocalKeypair && threadUserHasDmRelays && threadRecipientHasDmRelays,
                     forcePrivate = threadZapTarget?.id?.let { feedViewModel.eventRepo.isPrivate(it) } == true,
                     recipientPubkey = threadZapTarget?.pubkey,
-                    profileLookup = { feedViewModel.profileRepo.get(it) }
+                    profileLookup = { feedViewModel.profileRepo.get(it) },
+                    payOptions = rememberPayOptions(feedViewModel.eventRepo, threadZapRecipient)
                 )
             }
             val threadSetListedIds by feedViewModel.bookmarkSetRepo.allListedEventIds.collectAsState()
@@ -2203,7 +2206,8 @@ fun WispNavHost(
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
                     canPrivateZap = feedViewModel.hasLocalKeypair && hashtagUserHasDmRelays && hashtagRecipientHasDmRelays,
                     recipientPubkey = hashtagZapTarget?.pubkey,
-                    profileLookup = { feedViewModel.profileRepo.get(it) }
+                    profileLookup = { feedViewModel.profileRepo.get(it) },
+                    payOptions = rememberPayOptions(feedViewModel.eventRepo, hashtagZapRecipient)
                 )
             }
 
@@ -2357,7 +2361,8 @@ fun WispNavHost(
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
                     canPrivateZap = feedViewModel.hasLocalKeypair && setFeedUserHasDmRelays && setFeedRecipientHasDmRelays,
                     recipientPubkey = setFeedZapTarget?.pubkey,
-                    profileLookup = { feedViewModel.profileRepo.get(it) }
+                    profileLookup = { feedViewModel.profileRepo.get(it) },
+                    payOptions = rememberPayOptions(feedViewModel.eventRepo, setFeedZapRecipient)
                 )
             }
 

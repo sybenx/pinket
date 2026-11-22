@@ -126,6 +126,7 @@ import com.wisp.app.ui.component.ProfileQrSheet
 import com.wisp.app.ui.component.ProfilePicture
 import com.wisp.app.ui.component.RichContent
 import com.wisp.app.ui.component.ZapDialog
+import com.wisp.app.ui.component.rememberPayOptions
 import com.wisp.app.ui.util.LocalCanSign
 import com.wisp.app.viewmodel.ProfileSortMode
 import com.wisp.app.viewmodel.UserProfileViewModel
@@ -282,6 +283,7 @@ fun UserProfileScreen(
 
     if (zapTargetEvent != null) {
         val zapRecipient = zapTargetEvent!!.pubkey
+        val zapPayOptions = rememberPayOptions(eventRepo, zapRecipient)
         var resolvedCanPrivateZap by remember(zapRecipient) { mutableStateOf(canPrivateZap) }
         if (!canPrivateZap && fetchDmRelays != null) {
             LaunchedEffect(zapRecipient) {
@@ -300,11 +302,13 @@ fun UserProfileScreen(
             onGoToWallet = onWallet,
             canPrivateZap = resolvedCanPrivateZap,
             recipientPubkey = zapTargetEvent?.pubkey,
-            profileLookup = { eventRepo?.getProfileData(it) }
+            profileLookup = { eventRepo?.getProfileData(it) },
+            payOptions = zapPayOptions
         )
     }
 
     if (showProfileZapDialog) {
+        val profilePayOptions = rememberPayOptions(eventRepo, profilePubkey.ifEmpty { profile?.pubkey })
         ZapDialog(
             isWalletConnected = isWalletConnected,
             onDismiss = { showProfileZapDialog = false },
@@ -317,7 +321,8 @@ fun UserProfileScreen(
             canPrivateZap = false,
             // Profile zap — recipient is the profile being viewed.
             recipientPubkey = profile?.pubkey,
-            profileLookup = { pk -> profile?.takeIf { it.pubkey == pk } }
+            profileLookup = { pk -> profile?.takeIf { it.pubkey == pk } },
+            payOptions = profilePayOptions
         )
     }
 
@@ -977,6 +982,7 @@ fun UserProfileScreen(
                                 userReactionEmojis = userEmojis,
                                 hasUserReposted = hasUserReposted,
                                 onZap = { zapTargetEvent = event },
+                                moneroTips = true,
                                 hasUserZapped = hasUserZapped,
                                 likeCount = likeCount,
                                 replyCount = replyCount,
@@ -1163,6 +1169,7 @@ fun UserProfileScreen(
                                 userReactionEmojis = userEmojis,
                                 hasUserReposted = hasUserReposted2,
                                 onZap = { zapTargetEvent = event },
+                                moneroTips = true,
                                 hasUserZapped = hasUserZapped2,
                                 likeCount = likeCount,
                                 replyCount = replyCount,
@@ -1240,6 +1247,7 @@ fun UserProfileScreen(
                                 userReactionEmojis = userEmojis,
                                 hasUserReposted = hasUserReposted,
                                 onZap = { zapTargetEvent = event },
+                                moneroTips = true,
                                 hasUserZapped = hasUserZapped,
                                 likeCount = likeCount,
                                 replyCount = replyCount,
@@ -1475,7 +1483,10 @@ private fun ProfileHeader(
                             )
                         }
                     }
-                    if (profile?.lud16 != null && onZapClick != null) {
+                    // Shows what this account accepts: lightning as before, else Monero.
+                    val payOptions = rememberPayOptions(eventRepo, pubkey.ifEmpty { profile?.pubkey })
+                    val moneroOnly = profile?.lud16 == null && payOptions.acceptsMonero
+                    if ((profile?.lud16 != null || moneroOnly) && onZapClick != null) {
                         val useZapBolt = com.wisp.app.ui.util.useBoltIcon()
                         Surface(
                             onClick = onZapClick,
@@ -1483,7 +1494,14 @@ private fun ProfileHeader(
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             modifier = Modifier.size(40.dp)
                         ) {
-                            if (useZapBolt) {
+                            if (moneroOnly) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_monero),
+                                    contentDescription = stringResource(R.string.cd_monero),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(10.dp)
+                                )
+                            } else if (useZapBolt) {
                                 Icon(
                                     painter = painterResource(R.drawable.ic_bolt),
                                     contentDescription = "Zap",

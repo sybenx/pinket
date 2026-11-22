@@ -105,6 +105,7 @@ import com.wisp.app.ui.util.relayMatchesQuery
 import com.wisp.app.ui.util.relaySearchQuery
 import com.wisp.app.ui.component.WispDrawerContent
 import com.wisp.app.ui.component.ZapDialog
+import com.wisp.app.ui.component.rememberPayOptions
 import com.wisp.app.repo.RelayInfoRepository
 import com.wisp.app.relay.ScoredRelay
 import androidx.compose.foundation.layout.height
@@ -552,6 +553,7 @@ fun FeedScreen(
 
     if (zapTargetEvent != null) {
         val zapRecipient = zapTargetEvent!!.pubkey
+        val zapPayOptions = rememberPayOptions(viewModel.eventRepo, zapRecipient)
         val userHasDmRelays = viewModel.relayPool.hasDmRelays()
         var recipientHasDmRelays by remember(zapRecipient) {
             mutableStateOf(viewModel.relayListRepo.hasDmRelays(zapRecipient))
@@ -572,7 +574,8 @@ fun FeedScreen(
             onGoToWallet = onWallet,
             canPrivateZap = userHasDmRelays && recipientHasDmRelays,
             recipientPubkey = zapTargetEvent?.pubkey,
-            profileLookup = { viewModel.profileRepo.get(it) }
+            profileLookup = { viewModel.profileRepo.get(it) },
+            payOptions = zapPayOptions
         )
     }
 
@@ -1483,6 +1486,7 @@ private fun FeedItem(
             hasUserReposted = hasUserReposted,
             repostCount = repostCount,
             onZap = onZap,
+            moneroTips = true,
             hasUserZapped = hasUserZapped,
             likeCount = likeCount,
             replyCount = replyCount,

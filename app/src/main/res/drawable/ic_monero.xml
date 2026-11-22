@@ -1,0 +1,10 @@
+<!-- Monero mark ("M" in a circle), monochrome. Tint it like the neighbouring icons. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M12,0C5.365,0 0,5.373 0,12.015c0,1.335 0.228,2.607 0.618,3.81h3.577V5.729L12,13.545l7.805,-7.815v10.095h3.577c0.389,-1.203 0.618,-2.475 0.618,-3.81C24,5.375 18.635,0 12,0zM10.212,15.307l-3.417,-3.421v6.351H1.758C3.882,21.689 7.677,24 12,24s8.13,-2.311 10.243,-5.763h-5.04v-6.351l-3.415,3.421 -1.788,1.79 -1.788,-1.79z" />
+</vector>

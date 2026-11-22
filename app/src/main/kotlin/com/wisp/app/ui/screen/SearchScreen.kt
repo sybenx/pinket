@@ -678,6 +678,7 @@ private fun SearchNoteItem(
         onRepost = onRepost,
         onQuote = onQuote,
         onZap = onZap,
+        moneroTips = true,
         hasUserZapped = hasUserZapped,
         zapSats = zapSats,
         isZapAnimating = isZapAnimating,

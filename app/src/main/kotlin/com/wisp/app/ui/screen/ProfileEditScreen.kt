@@ -34,6 +34,8 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -47,6 +49,7 @@ import com.wisp.app.relay.RelayPool
 import com.wisp.app.ui.component.NsecPasteGuard
 import com.wisp.app.viewmodel.ProfileViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -63,6 +66,7 @@ fun ProfileEditScreen(
     val nip05 by viewModel.nip05.collectAsState()
     val banner by viewModel.banner.collectAsState()
     val lud16 by viewModel.lud16.collectAsState()
+    val moneroAddress by viewModel.moneroAddress.collectAsState()
     val publishing by viewModel.publishing.collectAsState()
     val uploading by viewModel.uploading.collectAsState()
     val error by viewModel.error.collectAsState()
@@ -198,6 +202,30 @@ fun ProfileEditScreen(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().scrollOnFocus()
             )
+            Spacer(Modifier.height(12.dp))
+            var moneroFocused by remember { mutableStateOf(false) }
+            // Flag a bad address once it is full length or the field is left, not mid-typing.
+            val moneroInvalid = !viewModel.isMoneroAddressValid(moneroAddress) &&
+                (!moneroFocused || moneroAddress.trim().length >= 95)
+            OutlinedTextField(
+                value = moneroAddress,
+                onValueChange = { new -> if (!NsecPasteGuard.blockIfNsec(moneroAddress, new)) viewModel.updateMoneroAddress(new) },
+                label = { Text(stringResource(R.string.placeholder_monero_address)) },
+                singleLine = true,
+                isError = moneroInvalid,
+                supportingText = {
+                    Text(
+                        stringResource(
+                            if (moneroInvalid) R.string.profile_monero_address_invalid
+                            else R.string.profile_monero_address_hint
+                        )
+                    )
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .scrollOnFocus()
+                    .onFocusChanged { moneroFocused = it.isFocused }
+            )
             Spacer(Modifier.height(16.dp))
 
             error?.let {
@@ -207,7 +235,13 @@ fun ProfileEditScreen(
 
             Button(
                 onClick = {
-                    if (viewModel.publishProfile(relayPool, signer = signer)) onBack()
+                    if (viewModel.publishProfile(relayPool, signer = signer)) {
+                        // Saving checks the newest payment list first; stay open if that fails.
+                        scope.launch {
+                            viewModel.publishing.first { !it }
+                            if (viewModel.error.value == null) onBack()
+                        }
+                    }
                 },
                 enabled = !publishing,
                 modifier = Modifier.fillMaxWidth()

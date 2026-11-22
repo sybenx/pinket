@@ -57,6 +57,17 @@ object AmountFormatter {
         return renderCurrency(fiat, currency)
     }
 
+    /**
+     * Rough fiat value for a hint such as "about $4": whole units from 1 up,
+     * the usual small-amount precision below that.
+     */
+    fun formatFiatApprox(amount: Double, currencyCode: String): String {
+        val currency = ExchangeRateRepository.currencyFor(currencyCode)
+        if (kotlin.math.abs(amount) < 1.0) return renderCurrency(amount, currency)
+        val formatter = DecimalFormat("#,##0", DecimalFormatSymbols(Locale.getDefault()))
+        return "${currency.symbol}${formatter.format(amount)}"
+    }
+
     private fun renderCurrency(amount: Double, currency: FiatCurrency): String {
         val abs = kotlin.math.abs(amount)
         // Sub-dollar tiers use `#` (optional) past the decimal so trailing
