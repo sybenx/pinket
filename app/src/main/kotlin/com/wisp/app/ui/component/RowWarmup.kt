@@ -30,6 +30,9 @@ import java.util.concurrent.atomic.AtomicInteger
 object RowWarmup {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    /** Makes a post's spam fingerprint ahead of time (set by the app; regex work, runs in the background). */
+    @Volatile var spamWarm: ((NostrEvent) -> Unit)? = null
+
     /** Posts already warmed (by id and settings), so repeated calls are no-ops. */
     private val warmedPosts = LruCache<String, Boolean>(3000)
 
@@ -69,6 +72,10 @@ object RowWarmup {
             pendingLooks.get() >= MAX_PENDING_LOOKS
         if (!lookSkipped) warmedPosts.put(key, true)
         val appContext = context.applicationContext
+
+        spamWarm?.let { warmSpam ->
+            scope.launch { try { warmSpam(event) } catch (_: Exception) {} }
+        }
 
         // Same call and condition as PostCard's LaunchedEffect, so the state is decided before the row shows
         if (translationRepo != null && event.kind != 30023 && pendingLooks.get() < MAX_PENDING_LOOKS) {

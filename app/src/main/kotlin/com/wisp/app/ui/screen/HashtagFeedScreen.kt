@@ -346,6 +346,7 @@ private fun HashtagFeedItem(
     PostCard(
         event = event,
         profile = profile,
+        collapseFlagged = true,
         onReply = { noteActions.onReply(event) },
         onProfileClick = { noteActions.onProfileClick(event.pubkey) },
         onNavigateToProfile = noteActions.onProfileClick,

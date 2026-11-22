@@ -193,11 +193,31 @@ fun PostCard(
     quoteDepth: Int = 0,
     modifier: Modifier = Modifier,
     showDivider: Boolean = true,
-    startExpanded: Boolean = false
+    startExpanded: Boolean = false,
+    /** Lists of posts (feed, search) pass true: a post flagged as spam shows as one line with "Show". */
+    collapseFlagged: Boolean = false
 ) {
     val displayName = remember(event.pubkey, profile?.displayString) {
         profile?.displayString
             ?: event.pubkey.toNpub().let { "${it.take(12)}...${it.takeLast(4)}" }
+    }
+
+    if (collapseFlagged) {
+        val spam = com.wisp.app.ui.util.LocalSpamActions.current
+        // Decided when the row is composed and again only when your votes change,
+        // so a row never folds or unfolds by itself while you look at it.
+        val votesVersion = spam?.version?.collectAsState()?.value
+        val flagged = remember(event.id, votesVersion) { spam?.isFlagged?.invoke(event) == true }
+        var shownAnyway by rememberSaveable(event.id) { mutableStateOf(false) }
+        if (flagged && !shownAnyway) {
+            CollapsedSpamRow(
+                name = profile?.displayString,
+                showDivider = showDivider,
+                modifier = modifier,
+                onShow = { shownAnyway = true }
+            )
+            return
+        }
     }
 
     val timestamp = remember(event.created_at) {
@@ -1495,5 +1515,37 @@ internal fun Nip05Badge(
                 )
             }
         }
+    }
+}
+
+/** One line standing in for a post that is folded away as spam. "Show" opens it in place. */
+@Composable
+internal fun CollapsedSpamRow(
+    name: String?,
+    showDivider: Boolean,
+    modifier: Modifier = Modifier,
+    onShow: () -> Unit
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 4.dp)
+        ) {
+            Text(
+                text = if (name != null) stringResource(R.string.spam_collapsed_from, name)
+                else stringResource(R.string.spam_collapsed),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = onShow) {
+                Text(stringResource(R.string.spam_collapsed_show), style = MaterialTheme.typography.labelMedium)
+            }
+        }
+        if (showDivider) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
     }
 }

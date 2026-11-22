@@ -1472,6 +1472,7 @@ private fun FeedItem(
         PostCard(
             event = event,
             profile = profileData,
+            collapseFlagged = true,
             onReply = onReply,
             onProfileClick = onProfileClick,
             onNavigateToProfile = onNavigateToProfile,
