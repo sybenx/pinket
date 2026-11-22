@@ -45,6 +45,18 @@ internal fun rememberPayOptions(eventRepo: EventRepository?, pubkey: String?): P
     return remember(eventRepo, pubkey, version) { eventRepo.getPayOptions(pubkey) }
 }
 
+/**
+ * True when [pubkey] takes Monero but has no lightning address, so the money
+ * button shows the Monero mark. Pass a null [eventRepo] where the screen's send
+ * sheet does not get the author's pay options: the button then stays as it was.
+ */
+@Composable
+internal fun rememberMoneroOnly(eventRepo: EventRepository?, pubkey: String?): Boolean {
+    if (eventRepo == null || pubkey == null) return false
+    val options = rememberPayOptions(eventRepo, pubkey)
+    return options.acceptsMonero && !options.acceptsBitcoin
+}
+
 @Composable
 internal fun rememberObservedEvent(eventRepo: EventRepository?, eventId: String?): NostrEvent? {
     if (eventRepo == null || eventId == null) return null

@@ -219,6 +219,7 @@ fun ThreadScreen(
             onRepost = onRepost,
             onQuote = onQuote,
             onZap = onZap,
+            moneroTips = true,
             onProfileClick = onProfileClick,
             onNoteClick = { eventId -> onQuotedNoteClick?.invoke(eventId) },
             onAddToList = onAddToList,

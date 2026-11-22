@@ -2235,6 +2235,7 @@ fun WispNavHost(
                         navController.navigate(Routes.COMPOSE)
                     },
                     onZap = { event -> hashtagZapTarget = event },
+                    moneroTips = true,
                     onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
                     onNoteClick = { eventId -> navController.navigate("thread/$eventId") },
                     onAddToList = { eventId -> addToListEventId = eventId },
@@ -2392,6 +2393,7 @@ fun WispNavHost(
                         navController.navigate(Routes.COMPOSE)
                     },
                     onZap = { event -> setFeedZapTarget = event },
+                    moneroTips = true,
                     onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
                     onNoteClick = { eventId -> navController.navigate("thread/$eventId") },
                     onAddToList = { eventId -> addToListEventId = eventId },
