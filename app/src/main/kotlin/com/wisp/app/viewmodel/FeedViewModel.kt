@@ -264,6 +264,11 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         notifRepo.contactRepo = contactRepo
         notifRepo.extendedNetworkRepo = extendedNetworkRepo
         notifRepo.spamVotes = spamVotes
+        // Posts about to scroll into view get their fingerprint made ahead of
+        // time, so a row knows whether it is folded when it is first drawn.
+        com.wisp.app.ui.component.RowWarmup.spamWarm = { event ->
+            if (spamVotes.snapshot.hasFingerprintVotes) spamVotes.fingerprint(event)
+        }
         // A vote, or new data about who your follows mute and report, can change
         // which replies are hidden: run the decision again for notifications.
         viewModelScope.launch(Dispatchers.Default) {
@@ -629,6 +634,24 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
             val withdrawn = spamVotes.voteNotSpam(event, name)
             socialActions.withdrawSpamReports(withdrawn)
         }
+    }
+
+    /**
+     * Whether lists of posts (feed, search, quotes) fold [event] away as spam:
+     * your own vote on the author or on what the post looks like, or the
+     * follows' mutes and reports rule. The model is not asked here; it only
+     * judges replies. Memory lookups only.
+     */
+    fun isFlaggedPost(event: NostrEvent): Boolean {
+        if (!safetyPrefs.spamFilterEnabled.value) return false
+        if (event.pubkey == getUserPubkey() || contactRepo.isFollowing(event.pubkey)) return false
+        return com.wisp.app.repo.ReplyGate.settledVerdict(
+            ownVote = spamVotes.voteFor(event),
+            flaggedBy = extendedNetworkRepo.flaggedByFollowsCount(event.pubkey),
+            followedBy = extendedNetworkRepo.followedByFollowsCount(event.pubkey),
+            muteSignalEnabled = safetyPrefs.muteSignalEnabled.value,
+            followSignalEnabled = safetyPrefs.followSignalEnabled.value
+        ) == com.wisp.app.repo.ReplyGate.Verdict.HIDE
     }
 
     /** Takes one vote back from the review list. */

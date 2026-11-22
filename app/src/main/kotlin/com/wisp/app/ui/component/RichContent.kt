@@ -1191,7 +1191,34 @@ fun QuotedNote(
         }
     }
 
-    if (event != null && (forceStub || !presentAtStart)) {
+    // A quoted post flagged as spam stays folded under the quoter's own words.
+    val spamActions = com.wisp.app.ui.util.LocalSpamActions.current
+    val quoteFlagged = remember(event?.id) { event != null && spamActions?.isFlagged?.invoke(event) == true }
+    var quoteShownAnyway by rememberSaveable(eventId) { mutableStateOf(false) }
+
+    if (event != null && quoteFlagged && !quoteShownAnyway) {
+        QuoteStubCard(onClick = { quoteShownAnyway = true }) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)
+            ) {
+                Text(
+                    text = profile?.displayString?.let { stringResource(R.string.spam_collapsed_from, it) }
+                        ?: stringResource(R.string.spam_collapsed),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = stringResource(R.string.spam_collapsed_show),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    } else if (event != null && (forceStub || !presentAtStart)) {
         QuoteStubCard(onClick = effectiveNoteClick?.let { click -> { click(eventId) } }) {
             QuoteArrivedLine(
                 pictureUrl = profile?.picture,

@@ -666,6 +666,7 @@ fun WispNavHost(
                 pubkey != feedViewModel.getUserPubkey() && !feedViewModel.contactRepo.isFollowing(pubkey)
             },
             authorVote = { pubkey -> feedViewModel.spamVotes.snapshot.authorVote(pubkey) },
+            isFlagged = { event -> feedViewModel.isFlaggedPost(event) },
             markSpam = { event ->
                 feedViewModel.markSpam(event)
                 android.widget.Toast.makeText(

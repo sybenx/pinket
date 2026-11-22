@@ -664,6 +664,7 @@ private fun SearchNoteItem(
     PostCard(
         event = event,
         profile = profile,
+        collapseFlagged = true,
         likeCount = likeCount,
         userReactionEmojis = userEmojis,
         repostCount = repostCount,

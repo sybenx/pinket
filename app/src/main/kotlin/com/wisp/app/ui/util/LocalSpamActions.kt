@@ -15,6 +15,12 @@ class SpamActions(
     val canVote: (authorPubkey: String) -> Boolean,
     /** Your current vote on the author, if any. */
     val authorVote: (authorPubkey: String) -> ReplyGate.OwnVote?,
+    /**
+     * True when a post should be folded away where posts are listed: you
+     * voted it spam, or enough of the people you follow mute or report its
+     * author. Memory lookups only, safe while composing.
+     */
+    val isFlagged: (NostrEvent) -> Boolean,
     val markSpam: (NostrEvent) -> Unit,
     val markNotSpam: (NostrEvent) -> Unit
 )
