@@ -13,7 +13,7 @@ class SafetyPreferences(private val context: Context, pubkeyHex: String? = null)
     val spamFilterEnabled: StateFlow<Boolean> = _spamFilterEnabled
 
     private val _muteSignalEnabled = MutableStateFlow(prefs.getBoolean(KEY_MUTE_SIGNAL, true))
-    /** Hide replies from people 3+ of your follows publicly mute (see ReplyGate). */
+    /** Hide replies from people 3+ of your follows mute or report as spam (see ReplyGate). */
     val muteSignalEnabled: StateFlow<Boolean> = _muteSignalEnabled
 
     private val _followSignalEnabled = MutableStateFlow(prefs.getBoolean(KEY_FOLLOW_SIGNAL, true))
@@ -22,11 +22,6 @@ class SafetyPreferences(private val context: Context, pubkeyHex: String? = null)
 
     private val _wotFilterEnabled = MutableStateFlow(prefs.getBoolean(KEY_WOT_FILTER, false))
     val wotFilterEnabled: StateFlow<Boolean> = _wotFilterEnabled
-
-    private var safelistSet =
-        HashSet(prefs.getStringSet(KEY_SPAM_SAFELIST, emptySet()) ?: emptySet())
-    private val _spamSafelist = MutableStateFlow<Set<String>>(safelistSet.toSet())
-    val spamSafelist: StateFlow<Set<String>> = _spamSafelist
 
     fun setSpamFilterEnabled(enabled: Boolean) {
         _spamFilterEnabled.value = enabled
@@ -48,18 +43,15 @@ class SafetyPreferences(private val context: Context, pubkeyHex: String? = null)
         prefs.edit().putBoolean(KEY_WOT_FILTER, enabled).apply()
     }
 
-    fun isSpamSafelisted(pubkey: String): Boolean = safelistSet.contains(pubkey)
+    /**
+     * The old "Not spam" list. It now lives with the spam votes
+     * (SpamVotesRepository moves it over once and then clears it here).
+     */
+    fun takeLegacySpamSafelist(): Set<String> =
+        HashSet(prefs.getStringSet(KEY_SPAM_SAFELIST, emptySet()) ?: emptySet())
 
-    fun addToSpamSafelist(pubkey: String) {
-        safelistSet.add(pubkey)
-        _spamSafelist.value = safelistSet.toSet()
-        prefs.edit().putStringSet(KEY_SPAM_SAFELIST, safelistSet.toSet()).apply()
-    }
-
-    fun removeFromSpamSafelist(pubkey: String) {
-        safelistSet.remove(pubkey)
-        _spamSafelist.value = safelistSet.toSet()
-        prefs.edit().putStringSet(KEY_SPAM_SAFELIST, safelistSet.toSet()).apply()
+    fun clearLegacySpamSafelist() {
+        prefs.edit().remove(KEY_SPAM_SAFELIST).apply()
     }
 
     /** Re-point to the new account's prefs file and refresh all StateFlows. */
@@ -69,8 +61,6 @@ class SafetyPreferences(private val context: Context, pubkeyHex: String? = null)
         _muteSignalEnabled.value = prefs.getBoolean(KEY_MUTE_SIGNAL, true)
         _followSignalEnabled.value = prefs.getBoolean(KEY_FOLLOW_SIGNAL, true)
         _wotFilterEnabled.value = prefs.getBoolean(KEY_WOT_FILTER, false)
-        safelistSet = HashSet(prefs.getStringSet(KEY_SPAM_SAFELIST, emptySet()) ?: emptySet())
-        _spamSafelist.value = safelistSet.toSet()
     }
 
     companion object {

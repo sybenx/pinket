@@ -599,8 +599,8 @@
     <string name="tab_filters">Filters</string>
     <string name="safety_spam_filter_title">Spam replies</string>
     <string name="safety_spam_filter_description">Uses an on-device model to hide likely-bot replies in threads and notifications from people you don\'t follow. Model runs locally, no data leaves your device.</string>
-    <string name="safety_mute_signal_title">Replies your follows mute</string>
-    <string name="safety_mute_signal_description">Hide replies from people 3 or more of your follows have muted.</string>
+    <string name="safety_mute_signal_title">Replies your follows mute or report</string>
+    <string name="safety_mute_signal_description">Hide replies from people 3 or more of your follows have muted or reported as spam.</string>
     <string name="safety_follow_signal_title">People your follows follow</string>
     <string name="safety_follow_signal_description">Don\'t run the spam check on people 3 or more of your follows follow.</string>
     <string name="safety_wot_title">Web of Trust</string>
@@ -618,6 +618,15 @@
     <string name="thread_tap_to_show">Show</string>
     <string name="thread_tap_to_hide">Hide</string>
     <string name="thread_not_spam">Not spam</string>
+    <string name="btn_spam">Spam</string>
+    <string name="spam_marked_toast">Marked as spam</string>
+    <string name="safety_spam_votes_title">Your spam votes</string>
+    <string name="safety_spam_votes_posts_like">Posts like \"%1$s\"</string>
+    <string name="safety_spam_votes_links_to">Links to %1$s</string>
+    <string name="safety_spam_votes_unnamed">Someone without a name</string>
+    <string name="safety_spam_votes_undo">Undo</string>
+    <string name="safety_spam_votes_show_all">Show all %1$d</string>
+    <string name="safety_spam_votes_show_fewer">Show fewer</string>
     <plurals name="thread_continue">
         <item quantity="one">Show %1$d more reply</item>
         <item quantity="other">Show %1$d more replies</item>

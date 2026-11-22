@@ -38,6 +38,7 @@ class NotificationRepository(
     var safetyPrefs: SafetyPreferences? = null
     var contactRepo: ContactRepository? = null
     var extendedNetworkRepo: com.wisp.app.repo.ExtendedNetworkRepository? = null
+    var spamVotes: SpamVotesRepository? = null
 
     @Volatile private var currentPubkeyHex: String? = pubkeyHex
 
@@ -56,6 +57,22 @@ class NotificationRepository(
     private val lock = Any()
     private val groupMap = mutableMapOf<String, NotificationGroup>()
     private val zapEventIdsByGroup = mutableMapOf<String, MutableSet<String>>()
+    /**
+     * Replies the spam filter kept out of the list, newest last. They are held
+     * here instead of being thrown away so a "Not spam" vote (or better data
+     * about the author) brings them back. See [reevaluateSpam].
+     */
+    private data class HiddenReply(
+        val eventId: String,
+        val senderPubkey: String,
+        val replyTarget: String,
+        val hints: List<String>,
+        val timestamp: Long,
+        val isPrivate: Boolean,
+        val groupChatId: String?
+    )
+    private val hiddenReplies = LinkedHashMap<String, HiddenReply>()
+
     private val rebuildScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val rebuildSignals = Channel<Unit>(Channel.CONFLATED)
 
@@ -393,6 +410,7 @@ class NotificationRepository(
             zapEventIdsByGroup.clear()
             flatItems.clear()
             flatItemIds.clear()
+            hiddenReplies.clear()
             _notifications.value = emptyList()
             _flatNotifications.value = emptyList()
             _summary24h.value = NotificationSummary()
@@ -453,6 +471,7 @@ class NotificationRepository(
             }
         }
 
+        hiddenReplies.values.removeAll { it.senderPubkey == pubkey }
         toRemove.forEach { groupMap.remove(it) }
         toUpdate.forEach { (k, v) -> groupMap[k] = v }
         flatItems.removeAll { item ->
@@ -774,12 +793,13 @@ class NotificationRepository(
     private fun warmSpamScore(event: NostrEvent) {
         if (safetyPrefs?.spamFilterEnabled?.value != true) return
         if (contactRepo?.isFollowing(event.pubkey) == true) return
-        if (safetyPrefs?.isSpamSafelisted(event.pubkey) == true) return
-        // The follows graph already settles this author: no need to run the model.
-        if (networkVerdict(event.pubkey) != null) return
         // Only replies are spam-scored (see mergeReply); skip quotes/mentions
         if (event.tags.any { it.size >= 2 && it[0] == "q" }) return
         if (Nip10.getReplyTargetWithHint(event) == null) return
+        // The fingerprint is regex work too: make it here so mergeReply only reads it.
+        spamVotes?.let { if (it.snapshot.hasFingerprintVotes) it.fingerprint(event) }
+        // The user's vote or the follows graph already settles this author: no need to run the model.
+        if (settledVerdict(event.pubkey, event.id) != null) return
         val classifier = spamClassifier ?: return
         val cache = spamAuthorCache ?: return
         val repo = eventRepo ?: return
@@ -793,31 +813,133 @@ class NotificationRepository(
         if (score != null) cache.put(event.pubkey, score, inputs.size)
     }
 
-    /** Follows-graph part of [ReplyGate]; null when the model should decide. No SQLite. */
-    private fun networkVerdict(pubkey: String): ReplyGate.Verdict? {
+    /**
+     * The user's own vote and the follows-graph part of [ReplyGate]; null when
+     * the model should decide. Memory lookups only: no SQLite, no regex.
+     */
+    private fun settledVerdict(pubkey: String, eventId: String): ReplyGate.Verdict? {
         val prefs = safetyPrefs ?: return null
-        val net = extendedNetworkRepo ?: return null
-        return ReplyGate.networkVerdict(
-            mutedBy = net.mutedByFollowsCount(pubkey),
-            followedBy = net.followedByFollowsCount(pubkey),
+        val net = extendedNetworkRepo
+        val votes = spamVotes
+        val snapshot = votes?.snapshot
+        val ownVote = snapshot?.voteFor(
+            pubkey,
+            if (snapshot.hasFingerprintVotes) votes.cachedFingerprint(eventId) else null
+        )
+        return ReplyGate.settledVerdict(
+            ownVote = ownVote,
+            flaggedBy = net?.flaggedByFollowsCount(pubkey),
+            followedBy = net?.followedByFollowsCount(pubkey),
             muteSignalEnabled = prefs.muteSignalEnabled.value,
             followSignalEnabled = prefs.followSignalEnabled.value
         )
     }
 
+    /** Whether the spam filter hides a reply by [pubkey] right now. Call under [lock] or off it; memory only. */
+    private fun isSpamHidden(pubkey: String, eventId: String): Boolean {
+        if (safetyPrefs?.spamFilterEnabled?.value != true) return false
+        if (pubkey == currentPubkeyHex) return false
+        if (contactRepo?.isFollowing(pubkey) == true) return false
+        val verdict = settledVerdict(pubkey, eventId) ?: run {
+            val noteCount = eventRepo?.getCachedEventsByAuthor(pubkey, 1, 10)?.size ?: 0
+            ReplyGate.modelVerdict(spamAuthorCache?.get(pubkey, noteCount))
+        }
+        return verdict == ReplyGate.Verdict.HIDE
+    }
+
+    /**
+     * Runs the spam decision again for every reply, shown or hidden, and moves
+     * the ones whose answer changed. Called when the user's votes or the
+     * follows-graph signals change. Returned replies come back quietly: no
+     * sound and no unread dot.
+     */
+    fun reevaluateSpam() = synchronized(lock) {
+        var changed = false
+        val back = hiddenReplies.values.filter { !isSpamHidden(it.senderPubkey, it.eventId) }
+        for (h in back) {
+            hiddenReplies.remove(h.eventId)
+            if (muteRepo?.isBlocked(h.senderPubkey) == true) continue
+            showReply(h)
+            changed = true
+        }
+        val nowHidden = groupMap.values.filterIsInstance<NotificationGroup.ReplyNotification>()
+            .filter { isSpamHidden(it.senderPubkey, it.replyEventId) }
+        for (g in nowHidden) {
+            val flat = flatItems.firstOrNull { it.id == g.groupId }
+            // Group chat replies were never spam filtered; leave them be.
+            if (flat?.groupChatId != null) continue
+            val target = g.referencedEventId ?: continue
+            groupMap.remove(g.groupId)
+            if (flatItemIds.remove(g.groupId)) flatItems.removeAll { it.id == g.groupId }
+            rememberHidden(
+                HiddenReply(
+                    eventId = g.replyEventId,
+                    senderPubkey = g.senderPubkey,
+                    replyTarget = target,
+                    hints = g.referencedEventHints,
+                    timestamp = g.latestTimestamp,
+                    isPrivate = flat?.isPrivateReply ?: (eventRepo?.isPrivate(g.replyEventId) == true),
+                    groupChatId = flat?.groupChatId
+                )
+            )
+            changed = true
+        }
+        if (changed) scheduleRebuildSortedList()
+    }
+
+    /** How many replies the spam filter is holding back. For tests and diagnostics. */
+    fun hiddenReplyCount(): Int = synchronized(lock) { hiddenReplies.size }
+
+    private fun rememberHidden(h: HiddenReply) {
+        hiddenReplies.remove(h.eventId)
+        hiddenReplies[h.eventId] = h
+        while (hiddenReplies.size > MAX_HIDDEN_REPLIES) {
+            val oldest = hiddenReplies.keys.iterator()
+            oldest.next()
+            oldest.remove()
+        }
+    }
+
+    private fun showReply(h: HiddenReply) {
+        val key = "reply:${h.eventId}"
+        groupMap[key] = NotificationGroup.ReplyNotification(
+            groupId = key,
+            senderPubkey = h.senderPubkey,
+            replyEventId = h.eventId,
+            referencedEventId = h.replyTarget,
+            referencedEventHints = h.hints,
+            latestTimestamp = h.timestamp
+        )
+        if (flatItemIds.add(key)) {
+            flatItems.add(FlatNotificationItem(
+                id = key,
+                type = NotificationType.REPLY,
+                actorPubkey = h.senderPubkey,
+                referencedEventId = h.replyTarget,
+                timestamp = h.timestamp,
+                replyEventId = h.eventId,
+                isPrivateReply = h.isPrivate,
+                groupChatId = h.groupChatId
+            ))
+        }
+    }
+
     private fun mergeReply(event: NostrEvent, replyTarget: String, replyTargetHint: String?): Boolean {
-        if (safetyPrefs?.spamFilterEnabled?.value == true &&
-            contactRepo?.isFollowing(event.pubkey) != true &&
-            safetyPrefs?.isSpamSafelisted(event.pubkey) != true
-        ) {
-            // Graph counts are in-memory lookups; the model score was computed
-            // off-lock in warmSpamScore, so only consult the cache here.
-            val verdict = networkVerdict(event.pubkey) ?: run {
-                val noteCount = eventRepo?.getCachedEventsByAuthor(event.pubkey, 1, 10)?.size ?: 0
-                val cached = spamAuthorCache?.get(event.pubkey, noteCount)
-                ReplyGate.decide(null, null, cached, muteSignalEnabled = false, followSignalEnabled = false)
-            }
-            if (verdict == ReplyGate.Verdict.HIDE) return false
+        // The fingerprint and the model score were made off-lock in
+        // warmSpamScore, so this only reads memory.
+        if (isSpamHidden(event.pubkey, event.id)) {
+            rememberHidden(
+                HiddenReply(
+                    eventId = event.id,
+                    senderPubkey = event.pubkey,
+                    replyTarget = replyTarget,
+                    hints = listOfNotNull(replyTargetHint),
+                    timestamp = event.created_at,
+                    isPrivate = eventRepo?.isPrivate(event.id) == true,
+                    groupChatId = event.tags.firstOrNull { it.size >= 2 && it[0] == "h" }?.get(1)
+                )
+            )
+            return false
         }
         val key = "reply:${event.id}"
         val hints = listOfNotNull(replyTargetHint)
@@ -1042,6 +1164,7 @@ class NotificationRepository(
     fun getSeenEventsSize(): Int = seenEvents.size()
 
     companion object {
+        private const val MAX_HIDDEN_REPLIES = 500
         private const val KEY_LAST_READ = "last_read_timestamp"
         private const val KEY_LATEST_NOTIF_TS = "latest_notif_ts"
         private const val RECENT_WINDOW_SECONDS = 600L // 10 minutes

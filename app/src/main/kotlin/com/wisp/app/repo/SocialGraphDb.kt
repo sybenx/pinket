@@ -17,7 +17,7 @@ class SocialGraphDb(private val context: Context, initialPubkeyHex: String? = nu
     }
 
     private class InternalHelper(ctx: Context, dbName: String) :
-        SQLiteOpenHelper(ctx, dbName, null, 2) {
+        SQLiteOpenHelper(ctx, dbName, null, 3) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL("""
                 CREATE TABLE followed_by (
@@ -28,9 +28,37 @@ class SocialGraphDb(private val context: Context, initialPubkeyHex: String? = nu
             """.trimIndent())
             db.execSQL("CREATE INDEX idx_followed_by_pubkey ON followed_by(pubkey)")
             createMutedBy(db)
+            createV3(db)
         }
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             if (oldVersion < 2) createMutedBy(db)
+            if (oldVersion < 3) createV3(db)
+        }
+
+        /**
+         * v3: the user's own "Spam" / "Not spam" votes, and which follows
+         * reported an account as spam.
+         */
+        private fun createV3(db: SQLiteDatabase) {
+            db.execSQL("""
+                CREATE TABLE IF NOT EXISTS spam_votes (
+                    type TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    spam INTEGER NOT NULL,
+                    label TEXT,
+                    report_id TEXT,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY (type, key)
+                )
+            """.trimIndent())
+            db.execSQL("""
+                CREATE TABLE IF NOT EXISTS reported_by (
+                    pubkey TEXT NOT NULL,
+                    reporter TEXT NOT NULL,
+                    PRIMARY KEY (pubkey, reporter)
+                )
+            """.trimIndent())
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_reported_by_pubkey ON reported_by(pubkey)")
         }
 
         /** Who among the user's follows has [pubkey] in their public mute list (kind 10000). */
@@ -125,6 +153,105 @@ class SocialGraphDb(private val context: Context, initialPubkeyHex: String? = nu
         }
     }
 
+    /** Replace the whole reported_by table with [rows] (reported pubkey, reporter). */
+    fun replaceReportedBy(rows: List<Pair<String, String>>) {
+        val db = helper.writableDatabase
+        db.beginTransaction()
+        try {
+            db.execSQL("DELETE FROM reported_by")
+            val stmt: SQLiteStatement =
+                db.compileStatement("INSERT OR IGNORE INTO reported_by (pubkey, reporter) VALUES (?, ?)")
+            for ((pubkey, reporter) in rows) {
+                stmt.bindString(1, pubkey)
+                stmt.bindString(2, reporter)
+                stmt.executeInsert()
+                stmt.clearBindings()
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /**
+     * pubkey -> how many different follows muted it or reported it as spam
+     * (someone who did both counts once), only for counts of at least [minCount].
+     */
+    fun getFlaggedByCountsAtLeast(minCount: Int): Map<String, Int> {
+        val result = HashMap<String, Int>()
+        helper.readableDatabase.rawQuery(
+            "SELECT pubkey, COUNT(*) AS cnt FROM (" +
+                "SELECT pubkey, muter AS who FROM muted_by UNION SELECT pubkey, reporter AS who FROM reported_by" +
+                ") GROUP BY pubkey HAVING cnt >= ${minCount.toInt()}",
+            null
+        ).use { cursor ->
+            while (cursor.moveToNext()) result[cursor.getString(0)] = cursor.getInt(1)
+        }
+        return result
+    }
+
+    // ---- the user's own spam votes ----
+
+    fun getSpamVotes(): List<SpamVote> {
+        val out = ArrayList<SpamVote>()
+        helper.readableDatabase.rawQuery(
+            "SELECT type, key, spam, label, report_id, created_at FROM spam_votes ORDER BY created_at DESC", null
+        ).use { c ->
+            while (c.moveToNext()) {
+                val type = SpamVote.Type.fromDb(c.getString(0)) ?: continue
+                out.add(
+                    SpamVote(
+                        type = type,
+                        key = c.getString(1),
+                        spam = c.getInt(2) != 0,
+                        label = if (c.isNull(3)) null else c.getString(3),
+                        reportId = if (c.isNull(4)) null else c.getString(4),
+                        createdAt = c.getLong(5)
+                    )
+                )
+            }
+        }
+        return out
+    }
+
+    fun putSpamVotes(votes: List<SpamVote>) {
+        if (votes.isEmpty()) return
+        val db = helper.writableDatabase
+        db.beginTransaction()
+        try {
+            val stmt = db.compileStatement(
+                "INSERT OR REPLACE INTO spam_votes (type, key, spam, label, report_id, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+            )
+            for (v in votes) {
+                stmt.bindString(1, v.type.db)
+                stmt.bindString(2, v.key)
+                stmt.bindLong(3, if (v.spam) 1 else 0)
+                if (v.label != null) stmt.bindString(4, v.label) else stmt.bindNull(4)
+                if (v.reportId != null) stmt.bindString(5, v.reportId) else stmt.bindNull(5)
+                stmt.bindLong(6, v.createdAt)
+                stmt.executeInsert()
+                stmt.clearBindings()
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun deleteSpamVotes(keys: List<Pair<SpamVote.Type, String>>) {
+        if (keys.isEmpty()) return
+        val db = helper.writableDatabase
+        db.beginTransaction()
+        try {
+            for ((type, key) in keys) {
+                db.delete("spam_votes", "type = ? AND key = ?", arrayOf(type.db, key))
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     fun getMutedByCount(pubkey: String): Int {
         helper.readableDatabase.rawQuery(
             "SELECT COUNT(*) FROM muted_by WHERE pubkey = ?", arrayOf(pubkey)
@@ -180,8 +307,8 @@ class SocialGraphDb(private val context: Context, initialPubkeyHex: String? = nu
         return result
     }
 
-    /** Explicit wipe of the current DB's contents. NOT called during account
-     *  switch — only invoked by a future explicit "recompute from scratch" path. */
+    /** Wipes the computed follows graph (followed_by, muted_by) before a rebuild.
+     *  The user's own spam votes and the reported_by table are left alone. */
     fun clearAll() {
         try {
             helper.writableDatabase.execSQL("DELETE FROM followed_by")

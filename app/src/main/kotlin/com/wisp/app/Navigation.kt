@@ -658,10 +658,28 @@ fun WispNavHost(
     var pipFullScreenPlayer by remember { mutableStateOf<ExoPlayer?>(null) }
     var pipFullScreenAspectRatio by remember { mutableStateOf(16f / 9f) }
 
+    val spamToastContext = androidx.compose.ui.platform.LocalContext.current
+    val spamActions = remember(feedViewModel) {
+        com.wisp.app.ui.util.SpamActions(
+            version = feedViewModel.spamVotes.version,
+            canVote = { pubkey ->
+                pubkey != feedViewModel.getUserPubkey() && !feedViewModel.contactRepo.isFollowing(pubkey)
+            },
+            authorVote = { pubkey -> feedViewModel.spamVotes.snapshot.authorVote(pubkey) },
+            markSpam = { event ->
+                feedViewModel.markSpam(event)
+                android.widget.Toast.makeText(
+                    spamToastContext, R.string.spam_marked_toast, android.widget.Toast.LENGTH_SHORT
+                ).show()
+            },
+            markNotSpam = { event -> feedViewModel.markNotSpam(event) }
+        )
+    }
     Box(modifier = Modifier.padding(innerPadding)) {
     CompositionLocalProvider(
         LocalCanSign provides (signingMode != SigningMode.READ_ONLY),
-        com.wisp.app.repo.LocalTranslationRepository provides feedViewModel.translationRepo
+        com.wisp.app.repo.LocalTranslationRepository provides feedViewModel.translationRepo,
+        com.wisp.app.ui.util.LocalSpamActions provides spamActions
     ) {
     NavHost(
         navController = navController,
@@ -1957,7 +1975,8 @@ fun WispNavHost(
                     spamAuthorCache = feedViewModel.spamAuthorCache,
                     safetyPrefs = feedViewModel.safetyPrefs,
                     contactRepo = feedViewModel.contactRepo,
-                    extendedNetworkRepo = feedViewModel.extendedNetworkRepo
+                    extendedNetworkRepo = feedViewModel.extendedNetworkRepo,
+                    spamVotes = feedViewModel.spamVotes
                 )
             }
             androidx.compose.runtime.DisposableEffect(Unit) {
@@ -2768,6 +2787,8 @@ fun WispNavHost(
                 onBack = { navController.popBackStack() },
                 onChanged = { feedViewModel.updateMutedWords() },
                 safetyPrefs = feedViewModel.safetyPrefs,
+                spamVotes = feedViewModel.spamVotes.votes,
+                onUndoSpamVote = { feedViewModel.undoSpamVote(it) },
                 cachedNetwork = feedViewModel.extendedNetworkRepo.cachedNetwork,
                 isNetworkReady = { feedViewModel.extendedNetworkRepo.isNetworkReady() },
                 onNavigateToSocialGraph = { navController.navigate(Routes.SOCIAL_GRAPH) },

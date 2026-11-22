@@ -191,6 +191,42 @@ class SocialActionManager(
         publishMuteList()
     }
 
+    /**
+     * Publishes a spam report for [event] and returns its id, or null when
+     * this login cannot sign. A private post is reported by author only, so
+     * its id never reaches public servers.
+     */
+    suspend fun reportSpam(event: NostrEvent): String? {
+        val s = getSigner() ?: return null
+        return try {
+            val tags = com.wisp.app.repo.NetworkReportSignals.buildSpamReportTags(
+                eventId = if (eventRepo.isPrivate(event.id)) null else event.id,
+                authorPubkey = event.pubkey
+            )
+            val report = s.signEvent(
+                kind = com.wisp.app.repo.NetworkReportSignals.KIND_REPORT, content = "", tags = tags
+            )
+            relayPool.sendToWriteRelays(ClientMessage.event(report))
+            report.id
+        } catch (e: Exception) {
+            android.util.Log.w("SocialActions", "Spam report failed", e)
+            null
+        }
+    }
+
+    /** Asks for earlier spam reports to be deleted (the vote was taken back). */
+    suspend fun withdrawSpamReports(reportIds: List<String>) {
+        if (reportIds.isEmpty()) return
+        val s = getSigner() ?: return
+        try {
+            val tags = Nip09.buildDeletionTags(reportIds, com.wisp.app.repo.NetworkReportSignals.KIND_REPORT)
+            val deletion = s.signEvent(kind = 5, content = "", tags = tags)
+            relayPool.sendToWriteRelays(ClientMessage.event(deletion))
+        } catch (e: Exception) {
+            android.util.Log.w("SocialActions", "Spam report withdrawal failed", e)
+        }
+    }
+
     fun unblockUser(pubkey: String) {
         muteRepo.unblockUser(pubkey)
         publishMuteList()

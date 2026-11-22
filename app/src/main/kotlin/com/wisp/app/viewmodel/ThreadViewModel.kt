@@ -78,6 +78,9 @@ class ThreadViewModel : ViewModel() {
     private var spamAuthorCache: SpamAuthorCache? = null
     private var extendedNetworkRepoRef: ExtendedNetworkRepository? = null
     private var signalsObserverJob: kotlinx.coroutines.Job? = null
+    private var spamVotes: com.wisp.app.repo.SpamVotesRepository? = null
+    private var votesObserverJob: kotlinx.coroutines.Job? = null
+    private val fingerprintingIds = mutableSetOf<String>()
     private var safetyPrefs: SafetyPreferences? = null
     private var contactRepo: ContactRepository? = null
     private var eventRepoRef: EventRepository? = null
@@ -106,11 +109,6 @@ class ThreadViewModel : ViewModel() {
 
     fun toggleSpamExpanded() {
         _spamExpanded.value = !_spamExpanded.value
-    }
-
-    fun markNotSpam(pubkey: String) {
-        safetyPrefs?.addToSpamSafelist(pubkey)
-        scheduleRebuild()
     }
 
     /**
@@ -159,7 +157,8 @@ class ThreadViewModel : ViewModel() {
         spamAuthorCache: SpamAuthorCache? = null,
         safetyPrefs: SafetyPreferences? = null,
         contactRepo: ContactRepository? = null,
-        extendedNetworkRepo: ExtendedNetworkRepository? = null
+        extendedNetworkRepo: ExtendedNetworkRepository? = null,
+        spamVotes: com.wisp.app.repo.SpamVotesRepository? = null
     ) {
         seedEventId = eventId
         this.muteRepo = muteRepo
@@ -169,6 +168,14 @@ class ThreadViewModel : ViewModel() {
         this.contactRepo = contactRepo
         this.extendedNetworkRepoRef = extendedNetworkRepo
         this.eventRepoRef = eventRepo
+        this.spamVotes = spamVotes
+        // Rebuild when the user's own spam votes load or change.
+        votesObserverJob?.cancel()
+        votesObserverJob = spamVotes?.let { repo ->
+            viewModelScope.launch {
+                repo.version.drop(1).collect { scheduleRebuild() }
+            }
+        }
         // Rebuild when the follows-graph reply signals finish loading.
         signalsObserverJob?.cancel()
         signalsObserverJob = extendedNetworkRepo?.let { repo ->
@@ -457,7 +464,23 @@ class ThreadViewModel : ViewModel() {
                 val inputs = notes.map { e -> NoteInput(e.content, e.tags, e.created_at) }
                 val score = classifier.score(inputs) ?: continue
                 cache.put(pubkey, score, inputs.size)
-                if (score >= 0.7f) changed = true
+                if (ReplyGate.isSpamScore(score)) changed = true
+            }
+            if (changed) withContext(Dispatchers.Main) { scheduleRebuild() }
+        }
+    }
+
+    /**
+     * Fingerprints are regex work, so they are made here, off the main thread.
+     * The tree is rebuilt only when one of them matches a vote.
+     */
+    private fun fingerprintAsync(events: List<NostrEvent>) {
+        val votes = spamVotes ?: return
+        viewModelScope.launch(Dispatchers.Default) {
+            var changed = false
+            for (event in events) {
+                votes.fingerprint(event)
+                if (votes.voteFor(event) != null) changed = true
             }
             if (changed) withContext(Dispatchers.Main) { scheduleRebuild() }
         }
@@ -471,6 +494,7 @@ class ThreadViewModel : ViewModel() {
         metadataBatchJob?.cancel()
         muteObserverJob?.cancel()
         signalsObserverJob?.cancel()
+        votesObserverJob?.cancel()
         deletionObserverJob?.cancel()
         relayPoolRef?.let { pool ->
             pool.closeOnAllRelays("thread-root")
@@ -485,6 +509,9 @@ class ThreadViewModel : ViewModel() {
         val spamEnabled = safetyPrefs?.spamFilterEnabled?.value == true
         val spamEvents = mutableListOf<NostrEvent>()
         val pubkeysToScore = mutableSetOf<String>()
+        val votes = spamVotes
+        val votesSnapshot = votes?.snapshot
+        val toFingerprint = mutableListOf<NostrEvent>()
 
         val deletedRepo = eventRepoRef?.deletedEventsRepo
         for (event in threadEvents.values) {
@@ -497,20 +524,24 @@ class ThreadViewModel : ViewModel() {
 
             if (spamEnabled &&
                 event.pubkey != currentUserPubkey &&
-                contactRepo?.isFollowing(event.pubkey) != true &&
-                safetyPrefs?.isSpamSafelisted(event.pubkey) != true
+                contactRepo?.isFollowing(event.pubkey) != true
             ) {
-                // Graph counts are in-memory lookups (no SQLite on the main thread).
+                // Everything here is an in-memory lookup (no SQLite, no regex on
+                // the main thread). A post whose fingerprint is not made yet is
+                // judged without it and fingerprinted in the background.
+                if (votes != null && votesSnapshot?.hasFingerprintVotes == true &&
+                    votes.cachedFingerprint(event.id) == null && fingerprintingIds.add(event.id)
+                ) toFingerprint.add(event)
                 val net = extendedNetworkRepoRef
-                val verdict = ReplyGate.networkVerdict(
-                    mutedBy = net?.mutedByFollowsCount(event.pubkey),
+                val verdict = ReplyGate.settledVerdict(
+                    ownVote = votes?.voteFor(event),
+                    flaggedBy = net?.flaggedByFollowsCount(event.pubkey),
                     followedBy = net?.followedByFollowsCount(event.pubkey),
                     muteSignalEnabled = safetyPrefs?.muteSignalEnabled?.value == true,
                     followSignalEnabled = safetyPrefs?.followSignalEnabled?.value == true
                 ) ?: if (spamClassifier != null) {
                     val noteCount = eventRepoRef?.getCachedEventsByAuthor(event.pubkey, 1, 10)?.size ?: 0
-                    val cached = spamAuthorCache?.get(event.pubkey, noteCount)
-                    ReplyGate.decide(null, null, cached, muteSignalEnabled = false, followSignalEnabled = false)
+                    ReplyGate.modelVerdict(spamAuthorCache?.get(event.pubkey, noteCount))
                 } else ReplyGate.Verdict.KEEP
                 if (verdict == ReplyGate.Verdict.HIDE) {
                     spamEvents.add(event)
@@ -530,6 +561,8 @@ class ThreadViewModel : ViewModel() {
 
         spamEvents.sortBy { it.created_at }
         _spamThread.value = spamEvents.map { it to 0 }
+
+        if (toFingerprint.isNotEmpty()) fingerprintAsync(toFingerprint)
 
         if (pubkeysToScore.isNotEmpty()) {
             spamScoringPubkeys.addAll(pubkeysToScore)

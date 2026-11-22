@@ -1,5 +1,6 @@
 package com.wisp.app.repo
 
+import com.wisp.app.repo.ReplyGate.OwnVote
 import com.wisp.app.repo.ReplyGate.Verdict
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -10,7 +11,49 @@ class ReplyGateTest {
     private fun decide(
         m: Int?, f: Int?, score: Float?,
         mute: Boolean = true, follow: Boolean = true
-    ) = ReplyGate.decide(m, f, score, mute, follow)
+    ) = ReplyGate.decide(null, m, f, score, mute, follow)
+
+    private fun voted(
+        vote: OwnVote, m: Int?, f: Int?, score: Float?,
+        mute: Boolean = true, follow: Boolean = true
+    ) = ReplyGate.decide(vote, m, f, score, mute, follow)
+
+    // ---- rule 0: the user's own vote ----
+
+    @Test fun `own spam vote hides whatever else is known`() {
+        for (m in listOf(null, 0, 3, 9)) for (f in listOf(null, 0, 3, 50)) for (s in listOf(null, 0.0f, 1.0f)) {
+            assertEquals("m=$m f=$f s=$s", Verdict.HIDE, voted(OwnVote.SPAM, m, f, s))
+        }
+    }
+
+    @Test fun `own not spam vote keeps whatever else is known`() {
+        for (m in listOf(null, 0, 3, 9)) for (f in listOf(null, 0, 3, 50)) for (s in listOf(null, 0.0f, 1.0f)) {
+            assertEquals("m=$m f=$f s=$s", Verdict.KEEP, voted(OwnVote.NOT_SPAM, m, f, s))
+        }
+    }
+
+    @Test fun `own vote does not depend on the follows toggles`() {
+        assertEquals(Verdict.HIDE, voted(OwnVote.SPAM, 0, 10, 0.0f, mute = false, follow = false))
+        assertEquals(Verdict.KEEP, voted(OwnVote.NOT_SPAM, 9, 0, 1.0f, mute = false, follow = false))
+    }
+
+    @Test fun `own vote never asks the model`() {
+        assertEquals(Verdict.HIDE, ReplyGate.settledVerdict(OwnVote.SPAM, null, null, true, true))
+        assertEquals(Verdict.KEEP, ReplyGate.settledVerdict(OwnVote.NOT_SPAM, null, null, true, true))
+        assertNull(ReplyGate.settledVerdict(null, 2, 2, true, true))
+        assertEquals(Verdict.HIDE, ReplyGate.settledVerdict(null, 3, 6, true, true))
+        assertEquals(Verdict.KEEP, ReplyGate.settledVerdict(null, 0, 3, true, true))
+    }
+
+    @Test fun `model verdict uses the one threshold`() {
+        assertEquals(Verdict.ASK_MODEL, ReplyGate.modelVerdict(null))
+        assertEquals(Verdict.KEEP, ReplyGate.modelVerdict(0.69f))
+        assertEquals(Verdict.HIDE, ReplyGate.modelVerdict(0.7f))
+        assertEquals(false, ReplyGate.isSpamScore(0.69f))
+        assertEquals(true, ReplyGate.isSpamScore(0.7f))
+    }
+
+    // ---- rules 1 to 3 (m = follows who mute or report, counted together) ----
 
     @Test fun `m3 f6 hides regardless of model`() {
         assertEquals(Verdict.HIDE, decide(3, 6, null))
