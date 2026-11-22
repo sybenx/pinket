@@ -55,6 +55,50 @@ object NetworkMuteSignals {
     }
 }
 
+/** Pure helpers for the follows' reports (NIP-56 kind 1984). Only spam reports count. */
+object NetworkReportSignals {
+    const val KIND_REPORT = 1984
+    const val TYPE_SPAM = "spam"
+
+    private val HEX64 = Regex("^[0-9a-fA-F]{64}$")
+
+    /**
+     * Pubkeys this event reports as spam. The report type is the third
+     * element of a `p` or `e` tag; a report counts when any of them says
+     * "spam", and it then applies to every `p`-tagged account.
+     */
+    fun spamReportedPubkeys(event: NostrEvent): Set<String> {
+        if (event.kind != KIND_REPORT) return emptySet()
+        val isSpam = event.tags.any {
+            it.size >= 3 && (it[0] == "p" || it[0] == "e") && it[2].equals(TYPE_SPAM, ignoreCase = true)
+        }
+        if (!isSpam) return emptySet()
+        val out = HashSet<String>()
+        for (tag in event.tags) {
+            if (tag.size < 2 || tag[0] != "p") continue
+            val pk = tag[1]
+            if (HEX64.matches(pk)) out.add(pk.lowercase())
+        }
+        out.remove(event.pubkey)
+        return out
+    }
+
+    /** (reported pubkey, reporter) rows for the reported_by table, reporters limited to [allowedAuthors]. */
+    fun reportedByRows(events: Iterable<NostrEvent>, allowedAuthors: Set<String>): List<Pair<String, String>> {
+        val rows = LinkedHashSet<Pair<String, String>>()
+        for (e in events) {
+            if (e.pubkey !in allowedAuthors) continue
+            for (pk in spamReportedPubkeys(e)) rows.add(pk to e.pubkey)
+        }
+        return rows.toList()
+    }
+
+    /** Tags for the user's own spam report on [event]. A private post is reported by author only. */
+    fun buildSpamReportTags(eventId: String?, authorPubkey: String): List<List<String>> =
+        if (eventId != null) listOf(listOf("e", eventId, TYPE_SPAM), listOf("p", authorPubkey))
+        else listOf(listOf("p", authorPubkey, TYPE_SPAM))
+}
+
 /**
  * Compact, immutable pubkey -> count lookup. Keys are the first 64 bits of
  * the pubkey (collisions are negligible at graph sizes), stored sorted so a

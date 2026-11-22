@@ -83,12 +83,14 @@ class ExtendedNetworkRepository(
 
     // Newest public mute list (kind 10000) per follow, collected during discovery.
     private val pendingMuteLists = java.util.concurrent.ConcurrentHashMap<String, NostrEvent>()
+    // Spam reports (kind 1984) by follows, by event id, collected during discovery.
+    private val pendingReports = java.util.concurrent.ConcurrentHashMap<String, NostrEvent>()
 
     // In-memory reply signal counts (see ReplyGate). Null = not known yet (fail open).
     // Only counts >= the ReplyGate thresholds are kept: a smaller value gives the
     // same decision as 0, so absent pubkeys read as 0.
     @Volatile private var followedByTable: PubkeyCountTable? = null
-    @Volatile private var mutedByTable: PubkeyCountTable? = null
+    @Volatile private var flaggedByTable: PubkeyCountTable? = null
     @Volatile private var signalsGeneration = 0
     private val signalsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -102,7 +104,11 @@ class ExtendedNetworkRepository(
         private const val THRESHOLD = 10
         private const val FOLLOW_LIST_TIMEOUT_MS = 5_000L
         private const val MUTE_LIST_SUB_ID = "extnet-mute"
+        private const val REPORT_SUB_ID = "extnet-report"
         private const val KEY_MUTES_FETCHED_AT = "mutes_fetched_at"
+        private const val KEY_REPORTS_FETCHED_AT = "reports_fetched_at"
+        private const val REPORT_MAX_AGE_SECONDS = 180L * 24 * 3600
+        private const val REPORT_LIMIT_PER_CHUNK = 1000
         private const val RELAY_LIST_CHUNK_SIZE = 500
         private const val RELAY_LIST_TIMEOUT_MS = 8_000L
         private const val MAX_EXTENDED_RELAYS = 100
@@ -130,15 +136,17 @@ class ExtendedNetworkRepository(
     fun followedByFollowsCount(pubkey: String): Int? = followedByTable?.get(pubkey)
 
     /**
-     * How many of the user's follows publicly mute [pubkey], or null when not
-     * known yet. Values below [ReplyGate.MIN_MUTED_BY] read as 0.
+     * How many of the user's follows publicly mute [pubkey] or reported it as
+     * spam (each follow counted once), or null when not known yet. Values
+     * below [ReplyGate.MIN_MUTED_BY] read as 0.
      */
-    fun mutedByFollowsCount(pubkey: String): Int? = mutedByTable?.get(pubkey)
+    fun flaggedByFollowsCount(pubkey: String): Int? = flaggedByTable?.get(pubkey)
 
     /** True when discovery should run in the background to feed the reply signals. */
     fun needsReplySignalRefresh(): Boolean {
         if (discoveryInProgress) return false
         if (prefs.getLong(KEY_MUTES_FETCHED_AT, 0L) <= 0L) return true
+        if (prefs.getLong(KEY_REPORTS_FETCHED_AT, 0L) <= 0L) return true
         val cache = _cachedNetwork.value ?: return true
         return isCacheStale(cache)
     }
@@ -162,13 +170,13 @@ class ExtendedNetworkRepository(
             PubkeyCountTable.from(socialGraphDb.getFollowerCountsAtLeast(ReplyGate.MIN_FOLLOWED_BY))
         } else null
         val muted = if (mutesFetched) {
-            PubkeyCountTable.from(socialGraphDb.getMutedByCountsAtLeast(ReplyGate.MIN_MUTED_BY))
+            PubkeyCountTable.from(socialGraphDb.getFlaggedByCountsAtLeast(ReplyGate.MIN_MUTED_BY))
         } else null
         if (gen != signalsGeneration) return
         followedByTable = followed
-        mutedByTable = muted
+        flaggedByTable = muted
         _replySignalsVersion.value = _replySignalsVersion.value + 1
-        Log.d(TAG, "Reply signals loaded: followedBy>=3 ${followed?.size}, mutedBy>=3 ${muted?.size}")
+        Log.d(TAG, "Reply signals loaded: followedBy>=3 ${followed?.size}, flaggedBy>=3 ${muted?.size}")
     }
 
     fun processFollowListEvent(event: NostrEvent) {
@@ -232,6 +240,7 @@ class ExtendedNetworkRepository(
             val firstDegreeSet = firstDegree.toSet()
             pendingFollowLists.clear()
             pendingMuteLists.clear()
+            pendingReports.clear()
             discoveryTotal = firstDegree.size
 
             // Step 1: Fetch kind 3 events for all follows using scoreboard routing, 3s timeout.
@@ -252,6 +261,19 @@ class ExtendedNetworkRepository(
             }
             val muteMsg = if (muteFilters.size == 1) ClientMessage.req(MUTE_LIST_SUB_ID, muteFilters[0])
             else ClientMessage.req(MUTE_LIST_SUB_ID, muteFilters)
+            // Spam reports by the same follows. Reports are not replaceable, so
+            // bound them by age and count.
+            val reportSince = System.currentTimeMillis() / 1000 - REPORT_MAX_AGE_SECONDS
+            val reportFilters = chunks.map { chunk ->
+                Filter(
+                    kinds = listOf(NetworkReportSignals.KIND_REPORT),
+                    authors = chunk,
+                    since = reportSince,
+                    limit = REPORT_LIMIT_PER_CHUNK
+                )
+            }
+            val reportMsg = if (reportFilters.size == 1) ClientMessage.req(REPORT_SUB_ID, reportFilters[0])
+            else ClientMessage.req(REPORT_SUB_ID, reportFilters)
 
             // Collect discovery events directly from the relay pool, bypassing the main
             // event processing pipeline. The main pipeline processes events sequentially
@@ -275,6 +297,11 @@ class ExtendedNetworkRepository(
                             pendingMuteLists.compute(ev.pubkey) { _, cur ->
                                 if (NetworkMuteSignals.isNewer(ev, cur)) ev else cur
                             }
+                        } else if (relayEvent.subscriptionId == REPORT_SUB_ID &&
+                            relayEvent.event.kind == NetworkReportSignals.KIND_REPORT &&
+                            relayEvent.event.pubkey in firstDegreeSet
+                        ) {
+                            pendingReports[relayEvent.event.id] = relayEvent.event
                         }
                     }
                 }
@@ -284,8 +311,12 @@ class ExtendedNetworkRepository(
                 val eoseDeferred = async {
                     subManager.awaitEoseCount(subId, sentCount, FOLLOW_LIST_TIMEOUT_MS)
                 }
+                val reportSentCount = relayPool.sendToTopRelays(reportMsg, maxRelays = 15)
                 val muteEoseDeferred = async {
                     subManager.awaitEoseCount(MUTE_LIST_SUB_ID, muteSentCount, FOLLOW_LIST_TIMEOUT_MS)
+                }
+                val reportEoseDeferred = async {
+                    subManager.awaitEoseCount(REPORT_SUB_ID, reportSentCount, FOLLOW_LIST_TIMEOUT_MS)
                 }
                 val muteStart = System.currentTimeMillis()
                 var lastFetched = 0
@@ -312,13 +343,15 @@ class ExtendedNetworkRepository(
                     }
                     kotlinx.coroutines.delay(200)
                 }
-                // Mute lists: keep collecting until their EOSE, a 1.5s stall, or the
-                // same overall timeout, whichever comes first.
-                var muteLast = pendingMuteLists.size
+                // Mute lists and reports: keep collecting until both EOSE, a 1.5s
+                // stall, or the same overall timeout, whichever comes first.
+                var muteLast = pendingMuteLists.size + pendingReports.size
                 var muteLastChange = System.currentTimeMillis()
                 val muteDeadline = muteStart + FOLLOW_LIST_TIMEOUT_MS
-                while (System.currentTimeMillis() < muteDeadline && !muteEoseDeferred.isCompleted) {
-                    val n = pendingMuteLists.size
+                while (System.currentTimeMillis() < muteDeadline &&
+                    !(muteEoseDeferred.isCompleted && reportEoseDeferred.isCompleted)
+                ) {
+                    val n = pendingMuteLists.size + pendingReports.size
                     if (n != muteLast) {
                         muteLast = n
                         muteLastChange = System.currentTimeMillis()
@@ -328,10 +361,12 @@ class ExtendedNetworkRepository(
                 }
                 eoseDeferred.cancel()
                 muteEoseDeferred.cancel()
+                reportEoseDeferred.cancel()
                 collectorJob.cancel()
             }
             subManager.closeSubscription(subId)
             subManager.closeSubscription(MUTE_LIST_SUB_ID)
+            subManager.closeSubscription(REPORT_SUB_ID)
             Log.d(TAG, "Fetched ${pendingMuteLists.size} public mute lists from ${firstDegree.size} follows")
             discoveryTotal = 0
 
@@ -385,13 +420,18 @@ class ExtendedNetworkRepository(
             withContext(Dispatchers.IO) {
                 val muteRows = NetworkMuteSignals.mutedByRows(HashMap(pendingMuteLists))
                 socialGraphDb.replaceMutedBy(muteRows)
+                val reportRows = NetworkReportSignals.reportedByRows(pendingReports.values.toList(), firstDegreeSet)
                 // A pass that got no follow lists (offline) does not count as fetched,
-                // so the next app start tries again.
+                // so the next app start tries again, and the reports from the last
+                // good pass are kept.
                 if (pendingFollowLists.isNotEmpty()) {
-                    prefs.edit().putLong(KEY_MUTES_FETCHED_AT, System.currentTimeMillis() / 1000).apply()
+                    socialGraphDb.replaceReportedBy(reportRows)
+                    val now = System.currentTimeMillis() / 1000
+                    prefs.edit().putLong(KEY_MUTES_FETCHED_AT, now).putLong(KEY_REPORTS_FETCHED_AT, now).apply()
                 }
-                Log.d(TAG, "Social graph: inserted ${muteRows.size} mutedBy rows")
+                Log.d(TAG, "Social graph: inserted ${muteRows.size} mutedBy rows, ${reportRows.size} reportedBy rows from ${pendingReports.size} reports")
                 pendingMuteLists.clear()
+                pendingReports.clear()
                 loadReplySignals(++signalsGeneration)
             }
 
@@ -640,9 +680,10 @@ class ExtendedNetworkRepository(
         _discoveryState.value = DiscoveryState.Idle
         pendingFollowLists.clear()
         pendingMuteLists.clear()
+        pendingReports.clear()
         signalsGeneration++
         followedByTable = null
-        mutedByTable = null
+        flaggedByTable = null
         discoveryTotal = 0
     }
 

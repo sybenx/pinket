@@ -488,6 +488,19 @@ fun PostCard(
                             }
                         )
                     }
+                    // Spam vote, for posts by people you do not follow. Read when the
+                    // menu opens, so it reflects the follow list and votes at that moment.
+                    val spamActions = com.wisp.app.ui.util.LocalSpamActions.current
+                    if (spamActions != null && !isOwnEvent && !isFollowingAuthor && spamActions.canVote(event.pubkey)) {
+                        val votedSpam = spamActions.authorVote(event.pubkey) == com.wisp.app.repo.ReplyGate.OwnVote.SPAM
+                        DropdownMenuItem(
+                            text = { Text(stringResource(if (votedSpam) R.string.thread_not_spam else R.string.btn_spam)) },
+                            onClick = {
+                                menuExpanded = false
+                                if (votedSpam) spamActions.markNotSpam(event) else spamActions.markSpam(event)
+                            }
+                        )
+                    }
                     if (onMuteThread != null) {
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.btn_mute_thread)) },

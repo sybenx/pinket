@@ -261,6 +261,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     )
     val safetyPrefs = SafetyPreferences(app, pubkeyHex)
     val spamAuthorCache = com.wisp.app.repo.SpamAuthorCache()
+    val spamVotes = com.wisp.app.repo.SpamVotesRepository(socialGraphDb, safetyPrefs)
     @Volatile
     var nspamClassifier: com.wisp.app.ml.NSpamClassifier? = null
         private set
@@ -272,6 +273,15 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         notifRepo.safetyPrefs = safetyPrefs
         notifRepo.contactRepo = contactRepo
         notifRepo.extendedNetworkRepo = extendedNetworkRepo
+        notifRepo.spamVotes = spamVotes
+        // A vote, or new data about who your follows mute and report, can change
+        // which replies are hidden: run the decision again for notifications.
+        viewModelScope.launch(Dispatchers.Default) {
+            spamVotes.version.collect { notifRepo.reevaluateSpam() }
+        }
+        viewModelScope.launch(Dispatchers.Default) {
+            extendedNetworkRepo.replySignalsVersion.collect { notifRepo.reevaluateSpam() }
+        }
         // Re-apply the web of trust filter to notifications already accepted while
         // the graph was missing (fail-open window) or before the user toggled it on.
         viewModelScope.launch(Dispatchers.Default) {
@@ -566,6 +576,8 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         safetyPrefs.reload(getUserPubkey())
         ownListStore = getUserPubkey()?.let { openOwnListStore(getApplication(), it) }
         startup.reloadForNewAccount()
+        // After the line above: it re-points the graph database to the new account.
+        spamVotes.reload()
         groupRepo.reload(getUserPubkey())
         val pk = getUserPubkey()
         relayPool.rekeyAuthPrefs(
@@ -684,6 +696,37 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     /** Open the "No follow list found" dialog (another screen's follow was refused with NEEDS_CONFIRM). */
     fun askFirstFollow(pubkey: String) = socialActions.askFirstFollow(listOf(pubkey))
     fun blockUser(pubkey: String) = socialActions.blockUser(pubkey)
+
+    /**
+     * "Spam" on a post: remembered on this device for the author and for what
+     * the post looks like, and published as a spam report so other people's
+     * filters can use it.
+     */
+    fun markSpam(event: NostrEvent) {
+        viewModelScope.launch(Dispatchers.Default) {
+            val name = profileRepo.get(event.pubkey)?.displayString
+            spamVotes.voteSpam(event, name)
+            val reportId = socialActions.reportSpam(event) ?: return@launch
+            spamVotes.setReportId(event.pubkey, reportId)
+        }
+    }
+
+    /** "Not spam" on a post. Stays on this device; an earlier report of the author is withdrawn. */
+    fun markNotSpam(event: NostrEvent) {
+        viewModelScope.launch(Dispatchers.Default) {
+            val name = profileRepo.get(event.pubkey)?.displayString
+            val withdrawn = spamVotes.voteNotSpam(event, name)
+            socialActions.withdrawSpamReports(withdrawn)
+        }
+    }
+
+    /** Takes one vote back from the review list. */
+    fun undoSpamVote(vote: com.wisp.app.repo.SpamVote) {
+        viewModelScope.launch(Dispatchers.Default) {
+            val removed = spamVotes.undo(vote.type, vote.key)
+            socialActions.withdrawSpamReports(listOfNotNull(removed?.reportId))
+        }
+    }
     fun unblockUser(pubkey: String) = socialActions.unblockUser(pubkey)
     fun sendRepost(event: NostrEvent) = socialActions.sendRepost(event)
     fun sendReaction(event: NostrEvent, content: String = "+") = socialActions.toggleReaction(event, content)

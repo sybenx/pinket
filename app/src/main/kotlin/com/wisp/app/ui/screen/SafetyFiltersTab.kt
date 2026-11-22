@@ -25,13 +25,30 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.wisp.app.R
 import com.wisp.app.repo.ExtendedNetworkCache
+import com.wisp.app.repo.ProfileRepository
 import com.wisp.app.repo.SafetyPreferences
+import com.wisp.app.repo.SpamVote
+import com.wisp.app.ui.component.ProfilePicture
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.style.TextOverflow
 import com.wisp.app.ui.theme.wispSwitchColors
 import kotlinx.coroutines.flow.StateFlow
 
 @Composable
 fun SafetyFiltersTab(
     safetyPrefs: SafetyPreferences,
+    spamVotes: StateFlow<List<SpamVote>>? = null,
+    onUndoSpamVote: (SpamVote) -> Unit = {},
+    profileRepo: ProfileRepository? = null,
+    profileVersion: StateFlow<Int>? = null,
+    fetchProfile: (String) -> Unit = {},
     cachedNetwork: StateFlow<ExtendedNetworkCache?>,
     isNetworkReady: () -> Boolean,
     onNavigateToSocialGraph: () -> Unit,
@@ -46,6 +63,7 @@ fun SafetyFiltersTab(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp)
     ) {
         Spacer(Modifier.height(16.dp))
@@ -90,6 +108,10 @@ fun SafetyFiltersTab(
             enabled = spamEnabled,
             onCheckedChange = { safetyPrefs.setFollowSignalEnabled(it) }
         )
+
+        if (spamVotes != null) {
+            SpamVotesList(spamVotes, onUndoSpamVote, profileRepo, profileVersion, fetchProfile)
+        }
 
         Spacer(Modifier.height(8.dp))
         HorizontalDivider()
@@ -210,6 +232,89 @@ fun SafetyFiltersTab(
         }
     }
 }
+
+/** The user's own "Spam" / "Not spam" votes, newest first, each with a way to take it back. */
+@Composable
+private fun SpamVotesList(
+    spamVotes: StateFlow<List<SpamVote>>,
+    onUndo: (SpamVote) -> Unit,
+    profileRepo: ProfileRepository?,
+    profileVersion: StateFlow<Int>?,
+    fetchProfile: (String) -> Unit
+) {
+    val votes by spamVotes.collectAsState()
+    if (votes.isEmpty()) return
+    var showAll by remember { mutableStateOf(false) }
+    val shown = if (showAll) votes else votes.take(SPAM_VOTES_COLLAPSED)
+    val version = profileVersion?.collectAsState()?.value ?: 0
+
+    LaunchedEffect(shown) {
+        if (profileRepo == null) return@LaunchedEffect
+        for (v in shown) {
+            if (v.type == SpamVote.Type.AUTHOR && !profileRepo.has(v.key)) fetchProfile(v.key)
+        }
+    }
+
+    Spacer(Modifier.height(16.dp))
+    Text(
+        text = stringResource(R.string.safety_spam_votes_title),
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.padding(start = 16.dp)
+    )
+    for (vote in shown) {
+        val profile = if (vote.type == SpamVote.Type.AUTHOR) {
+            remember(vote.key, version) { profileRepo?.get(vote.key) }
+        } else null
+        val what = when (vote.type) {
+            SpamVote.Type.AUTHOR -> profile?.displayString ?: vote.label
+                ?: stringResource(R.string.safety_spam_votes_unnamed)
+            SpamVote.Type.TEXT -> stringResource(R.string.safety_spam_votes_posts_like, vote.label ?: "")
+            SpamVote.Type.DOMAIN -> stringResource(R.string.safety_spam_votes_links_to, vote.key)
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, top = 4.dp)
+        ) {
+            if (vote.type == SpamVote.Type.AUTHOR) {
+                ProfilePicture(url = profile?.picture, size = 32)
+                Spacer(Modifier.width(12.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = what,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = stringResource(if (vote.spam) R.string.btn_spam else R.string.thread_not_spam),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            TextButton(onClick = { onUndo(vote) }) {
+                Text(stringResource(R.string.safety_spam_votes_undo))
+            }
+        }
+    }
+    if (votes.size > SPAM_VOTES_COLLAPSED) {
+        TextButton(
+            onClick = { showAll = !showAll },
+            modifier = Modifier.padding(start = 4.dp)
+        ) {
+            Text(
+                if (showAll) stringResource(R.string.safety_spam_votes_show_fewer)
+                else stringResource(R.string.safety_spam_votes_show_all, votes.size)
+            )
+        }
+    }
+}
+
+private const val SPAM_VOTES_COLLAPSED = 5
 
 @Composable
 private fun SpamSubToggle(

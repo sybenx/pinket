@@ -597,7 +597,23 @@ fun ThreadScreen(
                                             .padding(end = 16.dp, bottom = 4.dp),
                                         horizontalArrangement = Arrangement.End
                                     ) {
-                                        TextButton(onClick = { viewModel.markNotSpam(event.pubkey) }) {
+                                        // Your say on a hidden reply. "Spam" goes away once
+                                        // you have said so; "Not spam" brings the reply back.
+                                        val spamActions = com.wisp.app.ui.util.LocalSpamActions.current
+                                        val votesVersion = spamActions?.version?.collectAsState()?.value
+                                        val votedSpam = remember(event.pubkey, votesVersion) {
+                                            spamActions?.authorVote?.invoke(event.pubkey) ==
+                                                com.wisp.app.repo.ReplyGate.OwnVote.SPAM
+                                        }
+                                        if (!votedSpam) {
+                                            TextButton(onClick = { spamActions?.markSpam?.invoke(event) }) {
+                                                Text(
+                                                    stringResource(R.string.btn_spam),
+                                                    style = MaterialTheme.typography.labelSmall
+                                                )
+                                            }
+                                        }
+                                        TextButton(onClick = { spamActions?.markNotSpam?.invoke(event) }) {
                                             Text(
                                                 stringResource(R.string.thread_not_spam),
                                                 style = MaterialTheme.typography.labelSmall

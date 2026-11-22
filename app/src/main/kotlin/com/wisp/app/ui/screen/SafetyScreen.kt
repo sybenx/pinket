@@ -61,6 +61,8 @@ fun SafetyScreen(
     /** A person muted (true) or unmuted (false) from this screen: written through ListWriter. */
     onUserMuteChanged: (pubkey: String, wanted: Boolean) -> Unit = { _, _ -> },
     safetyPrefs: SafetyPreferences? = null,
+    spamVotes: StateFlow<List<com.wisp.app.repo.SpamVote>>? = null,
+    onUndoSpamVote: (com.wisp.app.repo.SpamVote) -> Unit = {},
     cachedNetwork: StateFlow<ExtendedNetworkCache?>? = null,
     isNetworkReady: () -> Boolean = { false },
     onNavigateToSocialGraph: () -> Unit = {},
@@ -111,6 +113,11 @@ fun SafetyScreen(
                 0 -> if (safetyPrefs != null && cachedNetwork != null) {
                     SafetyFiltersTab(
                         safetyPrefs = safetyPrefs,
+                        spamVotes = spamVotes,
+                        onUndoSpamVote = onUndoSpamVote,
+                        profileRepo = profileRepo,
+                        profileVersion = profileVersion,
+                        fetchProfile = fetchProfile,
                         cachedNetwork = cachedNetwork,
                         isNetworkReady = isNetworkReady,
                         onNavigateToSocialGraph = onNavigateToSocialGraph,
