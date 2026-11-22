@@ -197,6 +197,7 @@
     <string name="profile_monero_address_hint">Anyone can see this. Use a receive address you made only for your profile.</string>
     <string name="profile_monero_address_invalid">That is not a Monero address.</string>
     <string name="profile_monero_not_saved">Your Monero address was not saved. Try again.</string>
+    <string name="profile_not_saved">Your profile could not be loaded, so it was not saved. Try again.</string>
     <string name="placeholder_relay_url">wss://</string>
     <string name="placeholder_search_users_notes">Search users and notes</string>
     <string name="placeholder_search_relay">Search relay</string>

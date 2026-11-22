@@ -36,45 +36,41 @@ object NipA3 {
     fun moneroAddress(tags: List<List<String>>): String? =
         parseTargets(tags).firstOrNull { it.type in MONERO_TYPES && Monero.isValidAddress(it.address) }?.address
 
-    /** First Monero entry in [tags] even if it does not validate (for the editor field). */
-    fun firstMoneroEntry(tags: List<List<String>>): String? =
-        parseTargets(tags).firstOrNull { it.type in MONERO_TYPES }?.address
-
     /**
      * Tags to publish when the owner sets their Monero address to [address] (null
      * clears it), given the newest existing list's [existingTags] (null when the
      * account has none). Returns null when nothing should be published: no existing
-     * list and nothing to add, or the list already says exactly this.
+     * list and nothing to add, or the address shown to payers ([moneroAddress])
+     * already is [address].
      */
     fun planMoneroUpdate(existingTags: List<List<String>>?, address: String?): List<List<String>>? {
         if (existingTags == null) {
             return if (address == null) null else listOf(listOf(TAG_PAYTO, TYPE_MONERO, address))
         }
+        if (moneroAddress(existingTags) == address) return null
         val updated = withMoneroAddress(existingTags, address)
         return if (updated == existingTags) null else updated
     }
 
     /**
      * Returns [tags] with only the Monero entry changed. Every other tag (other payto
-     * types, unknown tags) is kept as-is and in order. All existing `monero`/`xmr`
-     * entries are dropped; when [address] is non-null a single
-     * `["payto","monero",address]` takes the place of the first one removed, or is
-     * appended when there was none.
+     * types, unknown tags) is kept as-is and in order.
+     *
+     * Setting an address edits the entry payers see (the first valid Monero entry,
+     * [moneroAddress]) in place: its address changes, its type becomes the lowercase
+     * `monero` and any extra elements stay. Other Monero entries are left alone. With
+     * no valid entry, `["payto","monero",address]` is appended.
+     *
+     * Clearing ([address] null) removes every `monero`/`xmr` entry, so no other
+     * Monero address takes the cleared one's place.
      */
     fun withMoneroAddress(tags: List<List<String>>, address: String?): List<List<String>> {
-        val out = mutableListOf<List<String>>()
-        var inserted = false
-        for (tag in tags) {
-            if (isMoneroTag(tag)) {
-                if (address != null && !inserted) {
-                    out.add(listOf(TAG_PAYTO, TYPE_MONERO, address))
-                    inserted = true
-                }
-                continue
-            }
-            out.add(tag)
+        if (address == null) return tags.filterNot(::isMoneroTag)
+        val target = tags.indexOfFirst { isMoneroTag(it) && Monero.isValidAddress(it[2].trim()) }
+        if (target < 0) return tags + listOf(listOf(TAG_PAYTO, TYPE_MONERO, address))
+        return tags.mapIndexed { index, tag ->
+            if (index != target) tag
+            else listOf(TAG_PAYTO, TYPE_MONERO, address) + tag.drop(3)
         }
-        if (address != null && !inserted) out.add(listOf(TAG_PAYTO, TYPE_MONERO, address))
-        return out
     }
 }

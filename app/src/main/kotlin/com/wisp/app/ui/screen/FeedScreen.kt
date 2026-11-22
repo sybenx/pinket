@@ -575,7 +575,8 @@ fun FeedScreen(
             canPrivateZap = userHasDmRelays && recipientHasDmRelays,
             recipientPubkey = zapTargetEvent?.pubkey,
             profileLookup = { viewModel.profileRepo.get(it) },
-            payOptions = zapPayOptions
+            // Gallery cards stay Bitcoin-only.
+            payOptions = zapPayOptions.takeUnless { zapTargetEvent?.let(::isGalleryEvent) == true }
         )
     }
 

@@ -86,7 +86,8 @@ data class PayOptions(
  *
  * Profiles that are already cached are never refetched while scrolling, so this
  * repository also remembers when each account's list was last looked up (found or
- * not) and asks again after [LOOKUP_TTL_SEC].
+ * not) and asks again after [LOOKUP_TTL_SEC], or sooner ([NOT_FOUND_TTL_SEC]) when
+ * no list was found, since an account may add one at any time.
  */
 class PayTargetRepository internal constructor(
     listPrefs: SharedPreferences,
@@ -101,6 +102,7 @@ class PayTargetRepository internal constructor(
     companion object {
         private const val TAG = "PayTargetRepository"
         const val LOOKUP_TTL_SEC = 24 * 60 * 60L
+        const val NOT_FOUND_TTL_SEC = 2 * 60 * 60L
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -129,10 +131,14 @@ class PayTargetRepository internal constructor(
 
     fun moneroAddress(pubkey: String): String? = get(pubkey)?.moneroAddress
 
-    /** True once a lookup for [pubkey] finished recently, whether or not a list was found. */
+    /**
+     * True once a lookup for [pubkey] finished recently. A found list stays fresh
+     * for [LOOKUP_TTL_SEC], a lookup that found nothing for [NOT_FOUND_TTL_SEC].
+     */
     fun isFresh(pubkey: String): Boolean {
         val at = checked.get(pubkey) ?: return false
-        return clock() - at < LOOKUP_TTL_SEC
+        val ttl = if (lists.get(pubkey) != null) LOOKUP_TTL_SEC else NOT_FOUND_TTL_SEC
+        return clock() - at < ttl
     }
 
     fun needsLookup(pubkey: String): Boolean = !isFresh(pubkey)

@@ -750,7 +750,8 @@ class RelayPool(private var prefs: SharedPreferences? = null) {
         }
     }
 
-    fun sendToAll(message: String) {
+    /** Sends [message] to every persistent relay. Returns how many it was sent to. */
+    fun sendToAll(message: String): Int {
         val subId = extractSubId(message)
         var sentCount = 0
         for (relay in relays) {
@@ -766,6 +767,7 @@ class RelayPool(private var prefs: SharedPreferences? = null) {
             logSubStart(subId, message)
             Log.d("RLC", "[Pool] sendToAll sub=$subId → $sentCount relays")
         }
+        return sentCount
     }
 
     /** Mark which relay URLs are the user's own pinned relays (from NIP-65). */

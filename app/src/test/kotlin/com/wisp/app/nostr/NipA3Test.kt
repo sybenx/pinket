@@ -35,7 +35,6 @@ class NipA3Test {
             listOf("payto", "monero", xmr2)
         )))
         assertNull(NipA3.moneroAddress(listOf(listOf("payto", "bitcoin", "bc1q"))))
-        assertEquals("not-an-address", NipA3.firstMoneroEntry(listOf(listOf("payto", "monero", "not-an-address"))))
     }
 
     @Test fun changingMoneroKeepsEverythingElseInOrder() {
@@ -65,16 +64,29 @@ class NipA3Test {
         assertEquals(listOf(listOf("payto", "bitcoin", "bc1q")), NipA3.withMoneroAddress(tags, null))
     }
 
-    @Test fun duplicatesCollapseIntoOneEntry() {
+    @Test fun changingEditsOnlyTheShownEntry() {
         val tags = listOf(
-            listOf("payto", "xmr", xmr2),
+            listOf("payto", "monero", "not-an-address"),
+            listOf("payto", "XMR", xmr2, "extra"),
             listOf("payto", "bitcoin", "bc1q"),
             listOf("payto", "monero", xmr)
         )
+        // the first valid entry is edited in place: type made lowercase, extra kept;
+        // the invalid entry and the second address stay as they were
         assertEquals(
-            listOf(listOf("payto", "monero", xmr), listOf("payto", "bitcoin", "bc1q")),
+            listOf(
+                listOf("payto", "monero", "not-an-address"),
+                listOf("payto", "monero", xmr, "extra"),
+                listOf("payto", "bitcoin", "bc1q"),
+                listOf("payto", "monero", xmr)
+            ),
             NipA3.withMoneroAddress(tags, xmr)
         )
+    }
+
+    @Test fun addingAppendsWhenOnlyInvalidEntries() {
+        val tags = listOf(listOf("payto", "monero", "not-an-address"))
+        assertEquals(tags + listOf(listOf("payto", "monero", xmr)), NipA3.withMoneroAddress(tags, xmr))
     }
 
     @Test fun addingAppendsWhenAbsent() {
@@ -90,6 +102,10 @@ class NipA3Test {
         assertNull(NipA3.planMoneroUpdate(tags, xmr))
         // clearing when there was no monero entry
         assertNull(NipA3.planMoneroUpdate(listOf(listOf("payto", "bitcoin", "bc1q")), null))
+        // unchanged address never rewrites unusual lists (alias, extras, two entries)
+        assertNull(NipA3.planMoneroUpdate(listOf(listOf("payto", "xmr", xmr)), xmr))
+        assertNull(NipA3.planMoneroUpdate(listOf(listOf("payto", "monero", xmr, "extra")), xmr))
+        assertNull(NipA3.planMoneroUpdate(listOf(listOf("payto", "monero", xmr), listOf("payto", "monero", xmr2)), xmr))
     }
 
     @Test fun planCreatesAddsChangesAndRemoves() {
@@ -102,10 +118,15 @@ class NipA3Test {
         assertEquals(listOf(listOf("payto", "bitcoin", "bc1q")), NipA3.planMoneroUpdate(tags, null))
         // only entry removed: publish an empty list rather than leave the old address up
         assertEquals(emptyList<List<String>>(), NipA3.planMoneroUpdate(listOf(listOf("payto", "monero", xmr)), null))
-        // an xmr alias entry is rewritten to the canonical type
+        // changing an xmr alias entry writes the lowercase canonical type
         assertEquals(
-            listOf(listOf("payto", "monero", xmr)),
-            NipA3.planMoneroUpdate(listOf(listOf("payto", "xmr", xmr)), xmr)
+            listOf(listOf("payto", "monero", xmr2)),
+            NipA3.planMoneroUpdate(listOf(listOf("payto", "xmr", xmr)), xmr2)
+        )
+        // clearing removes every Monero entry so no other address takes its place
+        assertEquals(
+            listOf(listOf("payto", "bitcoin", "bc1q")),
+            NipA3.planMoneroUpdate(listOf(listOf("payto", "monero", xmr), listOf("payto", "bitcoin", "bc1q"), listOf("payto", "xmr", xmr2)), null)
         )
     }
 }

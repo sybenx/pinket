@@ -50,6 +50,7 @@ import com.wisp.app.ui.component.NotifBlipSound
 import com.wisp.app.ui.component.BottomTab
 import com.wisp.app.ui.component.WispBottomBar
 import com.wisp.app.ui.component.ZapDialog
+import com.wisp.app.ui.component.isGalleryEvent
 import com.wisp.app.ui.component.rememberPayOptions
 import com.wisp.app.ui.component.pendingEmojiReactCallback
 import com.wisp.app.ui.component.AuthApprovalDialog
@@ -1380,7 +1381,9 @@ fun WispNavHost(
                     canPrivateZap = feedViewModel.hasLocalKeypair && userHasDmRelays && recipientHasDmRelays,
                     recipientPubkey = searchZapTarget?.pubkey,
                     profileLookup = { feedViewModel.profileRepo.get(it) },
+                    // Gallery cards stay Bitcoin-only.
                     payOptions = rememberPayOptions(feedViewModel.eventRepo, zapRecipient)
+                        .takeUnless { searchZapTarget?.let(::isGalleryEvent) == true }
                 )
             }
             SearchScreen(
@@ -2034,7 +2037,9 @@ fun WispNavHost(
                     forcePrivate = threadZapTarget?.id?.let { feedViewModel.eventRepo.isPrivate(it) } == true,
                     recipientPubkey = threadZapTarget?.pubkey,
                     profileLookup = { feedViewModel.profileRepo.get(it) },
+                    // Gallery cards stay Bitcoin-only.
                     payOptions = rememberPayOptions(feedViewModel.eventRepo, threadZapRecipient)
+                        .takeUnless { threadZapTarget?.let(::isGalleryEvent) == true }
                 )
             }
             val threadSetListedIds by feedViewModel.bookmarkSetRepo.allListedEventIds.collectAsState()
@@ -2207,7 +2212,9 @@ fun WispNavHost(
                     canPrivateZap = feedViewModel.hasLocalKeypair && hashtagUserHasDmRelays && hashtagRecipientHasDmRelays,
                     recipientPubkey = hashtagZapTarget?.pubkey,
                     profileLookup = { feedViewModel.profileRepo.get(it) },
+                    // Gallery cards stay Bitcoin-only.
                     payOptions = rememberPayOptions(feedViewModel.eventRepo, hashtagZapRecipient)
+                        .takeUnless { hashtagZapTarget?.let(::isGalleryEvent) == true }
                 )
             }
 
@@ -2362,7 +2369,9 @@ fun WispNavHost(
                     canPrivateZap = feedViewModel.hasLocalKeypair && setFeedUserHasDmRelays && setFeedRecipientHasDmRelays,
                     recipientPubkey = setFeedZapTarget?.pubkey,
                     profileLookup = { feedViewModel.profileRepo.get(it) },
+                    // Gallery cards stay Bitcoin-only.
                     payOptions = rememberPayOptions(feedViewModel.eventRepo, setFeedZapRecipient)
+                        .takeUnless { setFeedZapTarget?.let(::isGalleryEvent) == true }
                 )
             }
 

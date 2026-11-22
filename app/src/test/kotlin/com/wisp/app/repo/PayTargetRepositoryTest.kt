@@ -75,11 +75,16 @@ class PayTargetRepositoryTest {
         assertTrue(repo.needsLookup(pk))
         repo.markChecked(pk)
         assertFalse(repo.needsLookup(pk))
-        now += PayTargetRepository.LOOKUP_TTL_SEC + 1
+        // nothing found: asks again after the shorter not-found window
+        now += PayTargetRepository.NOT_FOUND_TTL_SEC + 1
         assertTrue(repo.needsLookup(pk))
-        // receiving an event also counts as a lookup
+        // receiving an event also counts as a lookup, and a found list stays fresh longer
         repo.updateFromEvent(event(5, emptyList()))
         assertFalse(repo.needsLookup(pk))
+        now += PayTargetRepository.NOT_FOUND_TTL_SEC + 1
+        assertFalse(repo.needsLookup(pk))
+        now += PayTargetRepository.LOOKUP_TTL_SEC
+        assertTrue(repo.needsLookup(pk))
         repo.close()
     }
 

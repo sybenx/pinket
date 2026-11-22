@@ -49,7 +49,7 @@ class OutboxRouter(
         authors: List<String>,
         templateFilters: List<Filter>,
         limitPerAuthor: Boolean = false
-    ) {
+    ): Int {
         val chunks = authors.chunked(MAX_AUTHORS_PER_FILTER)
         val allFilters = mutableListOf<Filter>()
         for (chunk in chunks) {
@@ -60,7 +60,7 @@ class OutboxRouter(
         }
         val msg = if (allFilters.size == 1) ClientMessage.req(subId, allFilters[0])
         else ClientMessage.req(subId, allFilters)
-        relayPool.sendToAll(msg)
+        return relayPool.sendToAll(msg)
     }
 
     /**
@@ -73,7 +73,7 @@ class OutboxRouter(
         templateFilters: List<Filter>,
         limitPerAuthor: Boolean = false,
         maxRelays: Int = 10
-    ) {
+    ): Int {
         val chunks = authors.chunked(MAX_AUTHORS_PER_FILTER)
         val allFilters = mutableListOf<Filter>()
         for (chunk in chunks) {
@@ -84,7 +84,7 @@ class OutboxRouter(
         }
         val msg = if (allFilters.size == 1) ClientMessage.req(subId, allFilters[0])
         else ClientMessage.req(subId, allFilters)
-        relayPool.sendToTopRelays(msg, maxRelays)
+        return relayPool.sendToTopRelays(msg, maxRelays)
     }
 
     /**
@@ -221,11 +221,13 @@ class OutboxRouter(
     /**
      * Request profiles for [pubkeys] from their known write relays + general relays.
      * Large author lists are chunked to stay within relay filter limits.
+     * Returns how many requests were sent (an upper bound on EOSE replies).
      */
-    fun requestProfiles(subId: String, pubkeys: List<String>) {
+    fun requestProfiles(subId: String, pubkeys: List<String>): Int {
         // Group by write relay and send targeted requests
         val knownPubkeys = pubkeys.filter { relayListRepo.hasRelayList(it) }
         val unknownPubkeys = pubkeys.filter { !relayListRepo.hasRelayList(it) }
+        var sent = 0
 
         val profileKinds = PROFILE_KINDS
         // Chunked templates get limit = chunk size, so kind 10133 gets its own filter
@@ -239,58 +241,64 @@ class OutboxRouter(
             val relayToAuthors = groupAuthorsByWriteRelay(knownPubkeys)
             for ((relayUrl, relayAuthors) in relayToAuthors) {
                 if (relayUrl.isEmpty()) {
-                    sendChunkedToAll(subId, relayAuthors, perAuthorTemplates, limitPerAuthor = true)
+                    sent += sendChunkedToAll(subId, relayAuthors, perAuthorTemplates, limitPerAuthor = true)
                 } else {
                     val f = Filter(kinds = profileKinds, authors = relayAuthors, limit = relayAuthors.size * profileKinds.size)
-                    relayPool.sendToRelayOrEphemeral(relayUrl, ClientMessage.req(subId, f))
+                    if (relayPool.sendToRelayOrEphemeral(relayUrl, ClientMessage.req(subId, f))) sent++
                 }
             }
         }
 
         // Fallback: send unknown pubkeys to top relays + profile indexers
         if (unknownPubkeys.isNotEmpty()) {
-            sendChunkedToTopRelays(subId, unknownPubkeys, perAuthorTemplates, limitPerAuthor = true)
+            sent += sendChunkedToTopRelays(subId, unknownPubkeys, perAuthorTemplates, limitPerAuthor = true)
             // Also query profile-specialized relays via ephemeral connections
             val chunks = unknownPubkeys.chunked(MAX_AUTHORS_PER_FILTER)
             for (chunk in chunks) {
                 val f = Filter(kinds = profileKinds, authors = chunk, limit = chunk.size * profileKinds.size)
                 val msg = ClientMessage.req(subId, f)
                 for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
-                    relayPool.sendToRelayOrEphemeral(url, msg)
+                    if (relayPool.sendToRelayOrEphemeral(url, msg)) sent++
                 }
             }
         }
+        return sent
     }
 
     /**
      * Request only NIP-A3 payment targets (kind 10133) for [pubkeys], routed like
      * [requestProfiles]. Used for accounts whose profile is already cached.
+     *
+     * Returns how many requests were sent. A relay can get more than one (the same
+     * sub id replaces the earlier one), so this is an upper bound on EOSE replies.
      */
-    fun requestPayTargets(subId: String, pubkeys: List<String>) {
+    fun requestPayTargets(subId: String, pubkeys: List<String>): Int {
         val template = listOf(Filter(kinds = listOf(NipA3.KIND_PAYMENT_TARGETS)))
         val knownPubkeys = pubkeys.filter { relayListRepo.hasRelayList(it) }
         val unknownPubkeys = pubkeys.filter { !relayListRepo.hasRelayList(it) }
+        var sent = 0
 
         if (knownPubkeys.isNotEmpty()) {
             for ((relayUrl, relayAuthors) in groupAuthorsByWriteRelay(knownPubkeys)) {
                 if (relayUrl.isEmpty()) {
-                    sendChunkedToAll(subId, relayAuthors, template, limitPerAuthor = true)
+                    sent += sendChunkedToAll(subId, relayAuthors, template, limitPerAuthor = true)
                 } else {
                     val f = Filter(kinds = listOf(NipA3.KIND_PAYMENT_TARGETS), authors = relayAuthors, limit = relayAuthors.size)
-                    relayPool.sendToRelayOrEphemeral(relayUrl, ClientMessage.req(subId, f))
+                    if (relayPool.sendToRelayOrEphemeral(relayUrl, ClientMessage.req(subId, f))) sent++
                 }
             }
         }
         if (unknownPubkeys.isNotEmpty()) {
-            sendChunkedToTopRelays(subId, unknownPubkeys, template, limitPerAuthor = true)
+            sent += sendChunkedToTopRelays(subId, unknownPubkeys, template, limitPerAuthor = true)
             for (chunk in unknownPubkeys.chunked(MAX_AUTHORS_PER_FILTER)) {
                 val f = Filter(kinds = listOf(NipA3.KIND_PAYMENT_TARGETS), authors = chunk, limit = chunk.size)
                 val msg = ClientMessage.req(subId, f)
                 for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
-                    relayPool.sendToRelayOrEphemeral(url, msg)
+                    if (relayPool.sendToRelayOrEphemeral(url, msg)) sent++
                 }
             }
         }
+        return sent
     }
 
 
