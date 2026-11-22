@@ -152,9 +152,15 @@ fun ZapDialog(
     payOptions: PayOptions? = null
 ) {
     val recipientProfile = recipientPubkey?.let { profileLookup(it) }
-    val options = payOptions?.let {
+    val liveOptions = payOptions?.let {
         it.copy(lightningAddress = it.lightningAddress ?: recipientProfile?.lud16?.trim()?.ifEmpty { null })
     }
+    // Decide Bitcoin-only vs Monero once per open sheet, and keep the Monero address
+    // it opened with. A pay list or profile arriving while the sheet is open must not
+    // swap the sheet (losing what was typed) or change the address being paid.
+    val openedMoneroAddress = remember(recipientPubkey) { liveOptions?.moneroAddress }
+    val options = if (openedMoneroAddress == null) null
+        else (liveOptions ?: PayOptions.NONE).copy(moneroAddress = openedMoneroAddress)
     if (options == null || !options.acceptsMonero) {
         BitcoinZapSheet(
             isWalletConnected = isWalletConnected,
@@ -770,9 +776,11 @@ private fun PayChoiceSheet(
     val moneroAddress = options.moneroAddress ?: return
     val context = LocalContext.current
     val interfacePrefs = remember { com.wisp.app.repo.InterfacePreferences(context) }
-    var method by remember {
+    var chosenMethod by remember {
         mutableStateOf(options.initialMethod(interfacePrefs.getLastPayMethod()) ?: PayMethod.MONERO)
     }
+    // Lightning address can come and go while open; never sit on a side that is gone.
+    val method = if (chosenMethod in options.methods) chosenMethod else PayMethod.MONERO
     var noWalletAmount by remember { mutableStateOf<BigDecimal?>(null) }
     val recipientName = recipientProfile?.displayString
         ?: recipientPubkey?.toNpub()?.let { "${it.take(12)}...${it.takeLast(4)}" }
@@ -799,7 +807,7 @@ private fun PayChoiceSheet(
         scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
     }
     val header: (@Composable () -> Unit)? = if (options.hasChoice) {
-        { PayMethodSwitch(methods = options.methods, selected = method, onSelect = { method = it }) }
+        { PayMethodSwitch(methods = options.methods, selected = method, onSelect = { chosenMethod = it }) }
     } else null
 
     ModalBottomSheet(

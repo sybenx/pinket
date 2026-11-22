@@ -243,11 +243,11 @@ fun ActionBar(
                                 onZapDisabledTap()
                             }
                         },
+                        // Monero-only: long-press does the same as tap. No fired-flag here:
+                        // onClick does not run after a long click, so a set flag would
+                        // swallow the next tap.
                         onLongClick = if (zapEnabled && moneroOnly) {
-                            {
-                                longPressFired.value = true
-                                onZap()
-                            }
+                            { onZap() }
                         } else if (zapEnabled && onZapLongPress != null) {
                             {
                                 longPressFired.value = true

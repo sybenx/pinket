@@ -303,7 +303,8 @@ fun UserProfileScreen(
             canPrivateZap = resolvedCanPrivateZap,
             recipientPubkey = zapTargetEvent?.pubkey,
             profileLookup = { eventRepo?.getProfileData(it) },
-            payOptions = zapPayOptions
+            // Gallery cards stay Bitcoin-only.
+            payOptions = zapPayOptions.takeUnless { zapTargetEvent?.let(::isGalleryEvent) == true }
         )
     }
 
@@ -1485,8 +1486,9 @@ private fun ProfileHeader(
                     }
                     // Shows what this account accepts: lightning as before, else Monero.
                     val payOptions = rememberPayOptions(eventRepo, pubkey.ifEmpty { profile?.pubkey })
-                    val moneroOnly = profile?.lud16 == null && payOptions.acceptsMonero
-                    if ((profile?.lud16 != null || moneroOnly) && onZapClick != null) {
+                    // Same test as posts: a blank lightning address does not count as Bitcoin.
+                    val moneroOnly = payOptions.acceptsMonero && !payOptions.acceptsBitcoin
+                    if ((profile?.lud16 != null || payOptions.acceptsMonero) && onZapClick != null) {
                         val useZapBolt = com.wisp.app.ui.util.useBoltIcon()
                         Surface(
                             onClick = onZapClick,

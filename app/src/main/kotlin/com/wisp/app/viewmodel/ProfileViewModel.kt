@@ -118,11 +118,17 @@ class ProfileViewModel(app: Application) : AndroidViewModel(app) {
     private var eventRepoRef: EventRepository? = null
     /** Newest kind 0 seen by the editor's own fetch; base for the merge on save. */
     private var latestProfileEvent: NostrEvent? = null
-    /** What the Monero field was filled with, so a late fetch does not overwrite typing. */
+    /** What the Monero field was filled with, to tell whether the person edited it. */
     private var loadedMoneroAddress: String = ""
-    /** Becomes true once a relay finished answering the editor's fetch (EOSE). */
-    private val selfFetchDone = MutableStateFlow(false)
+    /**
+     * Becomes true once the editor's fetch is conclusive: every write relay that was
+     * connected when it started has finished answering (EOSE), and at least one relay
+     * answered. Only then can a missing list or profile be trusted as missing.
+     */
+    private val selfFetchComplete = MutableStateFlow(false)
     private var selfFetchStarted = false
+    private var selfFetchSubIds: List<String> = emptyList()
+    private var selfFetchGeneration = 0L
     private var eoseJob: Job? = null
 
     private fun applyProfile(profile: com.wisp.app.nostr.ProfileData) {
@@ -135,7 +141,8 @@ class ProfileViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun applyPayTargets(eventRepo: EventRepository, pubkeyHex: String) {
-        val entry = eventRepo.getPayTargets(pubkeyHex)?.let { NipA3.firstMoneroEntry(it.tags) } ?: ""
+        // Same address the pay button shows (first valid entry), so editor and button agree.
+        val entry = eventRepo.getPayTargets(pubkeyHex)?.moneroAddress ?: ""
         // Only replace the field while the person has not edited it.
         if (_moneroAddress.value == loadedMoneroAddress) _moneroAddress.value = entry
         loadedMoneroAddress = entry
@@ -159,21 +166,40 @@ class ProfileViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun startSelfFetch(eventRepo: EventRepository, relayPool: RelayPool, pubkeyHex: String) {
-        val subId = "editprofile"
-        relayPool.closeOnAllRelays(subId)
-        selfFetchDone.value = false
+        selfFetchSubIds.forEach(relayPool::closeOnAllRelays)
+        selfFetchComplete.value = false
         selfFetchStarted = true
+
+        // One sub id for every relay (wide net for the newest copy), plus one per
+        // connected write relay so we know when each of those has answered. The
+        // account's own lists are published to its write relays.
+        val writeSubs = relayPool.getWriteRelayUrls()
+            .filter(relayPool::isRelayConnected)
+            .mapIndexed { index, url -> url to "$SELF_SUB_PREFIX-w$index" }
+            .filter { (url, subId) -> relayPool.subscriptionTracker.hasCapacity(url, subId) }
+        val allSubIds = listOf(SELF_SUB_PREFIX) + writeSubs.map { it.second }
+        selfFetchSubIds = allSubIds
+        val generation = relayPool.reconnectGeneration
+        selfFetchGeneration = generation
 
         // Subscribe to EOSE and events before sending so a fast relay is not missed.
         eoseJob?.cancel()
         eoseJob = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            relayPool.eoseSignals.first { it == subId }
-            selfFetchDone.value = true
+            val waiting = writeSubs.map { it.second }.toMutableSet()
+            var anyEose = false
+            relayPool.eoseSignals.first { subId ->
+                if (subId in allSubIds && relayPool.reconnectGeneration == generation) {
+                    anyEose = true
+                    waiting.remove(subId)
+                }
+                anyEose && waiting.isEmpty()
+            }
+            selfFetchComplete.value = true
         }
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            relayPool.relayEventsFor { it == subId }.collect { (event, _, subscriptionId) ->
-                if (subscriptionId != subId || event.pubkey != pubkeyHex) return@collect
+            relayPool.relayEventsFor { it in allSubIds }.collect { (event, _, subscriptionId) ->
+                if (subscriptionId !in allSubIds || event.pubkey != pubkeyHex) return@collect
                 when (event.kind) {
                     0 -> {
                         if (event.created_at > (latestProfileEvent?.created_at ?: -1)) latestProfileEvent = event
@@ -193,29 +219,35 @@ class ProfileViewModel(app: Application) : AndroidViewModel(app) {
             Filter(kinds = listOf(0), authors = listOf(pubkeyHex), limit = 1),
             Filter(kinds = listOf(NipA3.KIND_PAYMENT_TARGETS), authors = listOf(pubkeyHex), limit = 1)
         )
-        relayPool.sendToAll(ClientMessage.req(subId, filters))
+        relayPool.sendToAll(ClientMessage.req(SELF_SUB_PREFIX, filters))
+        for ((url, subId) in writeSubs) relayPool.sendToRelay(url, ClientMessage.req(subId, filters))
     }
 
     /**
      * Waits (bounded) for the editor's fetch so saving starts from the newest
-     * kind 0 and kind 10133. Returns true if at least one relay finished answering.
+     * kind 0 and kind 10133. Returns true only if the fetch is conclusive (see
+     * [selfFetchComplete]).
      */
     private suspend fun awaitSelfFetch(relayPool: RelayPool, pubkeyHex: String): Boolean {
         val repo = eventRepoRef
-        if (!selfFetchStarted && repo != null) startSelfFetch(repo, relayPool, pubkeyHex)
-        if (selfFetchDone.value) return true
-        val done = withTimeoutOrNull(SELF_FETCH_TIMEOUT_MS) { selfFetchDone.first { it } } != null
-        // Give slower relays a moment to deliver a newer copy after the first EOSE.
+        if (selfFetchComplete.value) return true
+        // Not started yet, or the connection reset since (EOSEs after that are ignored): ask again.
+        val stale = selfFetchStarted && relayPool.reconnectGeneration != selfFetchGeneration
+        if ((!selfFetchStarted || stale) && repo != null) startSelfFetch(repo, relayPool, pubkeyHex)
+        val done = withTimeoutOrNull(SELF_FETCH_TIMEOUT_MS) { selfFetchComplete.first { it } } != null
+        // Give other relays a moment to deliver a newer copy.
         if (done) delay(SELF_FETCH_SETTLE_MS)
         return done
     }
 
     /**
      * Publishes the profile. Returns false without publishing when the Monero
-     * field holds an invalid address or nobody is logged in. Otherwise the work
-     * continues in the background: it waits briefly for the newest profile and
+     * field was edited to an invalid address or nobody is logged in. Otherwise the
+     * work continues in the background: it waits briefly for the newest profile and
      * payment list, publishes kind 0 starting from the existing content (unknown
-     * fields survive), then publishes kind 10133 only if the Monero entry changed.
+     * fields survive), then publishes kind 10133 only if the person edited the
+     * Monero field. When the existing profile or list could not be loaded, that
+     * part is not published and [error] says so.
      */
     fun publishProfile(relayPool: RelayPool, signer: NostrSigner? = null): Boolean {
         val s = signer ?: keyRepo.getKeypair()?.let { LocalSigner(it.privkey, it.pubkey) }
@@ -225,7 +257,9 @@ class ProfileViewModel(app: Application) : AndroidViewModel(app) {
         }
         val pubkeyHex = s.pubkeyHex
         val desiredMonero = Monero.normalizeAddress(_moneroAddress.value)
-        if (desiredMonero != null && !Monero.isValidAddress(desiredMonero)) {
+        // Decide now: a list arriving during the wait below rewrites loadedMoneroAddress.
+        val moneroEdited = desiredMonero != Monero.normalizeAddress(loadedMoneroAddress)
+        if (moneroEdited && desiredMonero != null && !Monero.isValidAddress(desiredMonero)) {
             _error.value = getApplication<Application>().getString(R.string.profile_monero_address_invalid)
             return false
         }
@@ -244,37 +278,18 @@ class ProfileViewModel(app: Application) : AndroidViewModel(app) {
                 // Kind 0: newest raw content we can find, then overwrite edited fields only.
                 val base = listOfNotNull(latestProfileEvent, repo?.newestCachedEvent(0, pubkeyHex))
                     .maxByOrNull { it.created_at }
+                if (base == null && (repo?.getProfileData(pubkeyHex) != null || !fetched)) {
+                    // A profile exists (or may exist) but its full content did not load.
+                    // Publishing from nothing would drop fields this editor does not show.
+                    _error.value = getApplication<Application>().getString(R.string.profile_not_saved)
+                    return@launch
+                }
                 val content = ProfileContent.merge(base?.content, edits)
                 val profileEvent = s.signEvent(kind = 0, content = content)
                 relayPool.sendToWriteRelays(ClientMessage.event(profileEvent))
 
-                // Kind 10133: change only the Monero entry of the newest list.
-                val existing = repo?.getPayTargets(pubkeyHex)
-                val cachedEvent = repo?.newestCachedEvent(NipA3.KIND_PAYMENT_TARGETS, pubkeyHex)
-                val existingTags: List<List<String>>?
-                val existingContent: String
-                if (cachedEvent != null && cachedEvent.created_at > (existing?.createdAt ?: -1)) {
-                    existingTags = cachedEvent.tags; existingContent = cachedEvent.content
-                } else {
-                    existingTags = existing?.tags; existingContent = existing?.content ?: ""
-                }
-                val newTags = NipA3.planMoneroUpdate(existingTags, desiredMonero)
-                if (newTags != null) {
-                    if (existingTags == null && !fetched) {
-                        // Could not confirm there is no existing list; publishing now
-                        // could wipe other payment entries.
-                        _error.value = getApplication<Application>().getString(R.string.profile_monero_not_saved)
-                    } else {
-                        val payEvent = s.signEvent(
-                            kind = NipA3.KIND_PAYMENT_TARGETS,
-                            content = existingContent,
-                            tags = newTags
-                        )
-                        relayPool.sendToWriteRelays(ClientMessage.event(payEvent))
-                        repo?.cacheEvent(payEvent)
-                        loadedMoneroAddress = desiredMonero ?: ""
-                    }
-                }
+                // Kind 10133: only when the field was edited, and only the Monero entry.
+                if (moneroEdited) publishMonero(relayPool, s, pubkeyHex, desiredMonero, fetched)
             } catch (e: Exception) {
                 _error.value = "Failed to publish: ${e.message}"
             } finally {
@@ -284,8 +299,43 @@ class ProfileViewModel(app: Application) : AndroidViewModel(app) {
         return true
     }
 
+    private suspend fun publishMonero(
+        relayPool: RelayPool,
+        signer: NostrSigner,
+        pubkeyHex: String,
+        desiredMonero: String?,
+        fetched: Boolean
+    ) {
+        if (!fetched) {
+            // Could not confirm we have the newest list; publishing now could wipe
+            // other payment entries or bring back an old one.
+            _error.value = getApplication<Application>().getString(R.string.profile_monero_not_saved)
+            return
+        }
+        val repo = eventRepoRef
+        val existing = repo?.getPayTargets(pubkeyHex)
+        val cachedEvent = repo?.newestCachedEvent(NipA3.KIND_PAYMENT_TARGETS, pubkeyHex)
+        val existingTags: List<List<String>>?
+        val existingContent: String
+        if (cachedEvent != null && cachedEvent.created_at > (existing?.createdAt ?: -1)) {
+            existingTags = cachedEvent.tags; existingContent = cachedEvent.content
+        } else {
+            existingTags = existing?.tags; existingContent = existing?.content ?: ""
+        }
+        val newTags = NipA3.planMoneroUpdate(existingTags, desiredMonero) ?: return
+        val payEvent = signer.signEvent(
+            kind = NipA3.KIND_PAYMENT_TARGETS,
+            content = existingContent,
+            tags = newTags
+        )
+        relayPool.sendToWriteRelays(ClientMessage.event(payEvent))
+        repo?.cacheEvent(payEvent)
+        loadedMoneroAddress = desiredMonero ?: ""
+    }
+
     companion object {
         private const val SELF_FETCH_TIMEOUT_MS = 6_000L
         private const val SELF_FETCH_SETTLE_MS = 800L
+        private const val SELF_SUB_PREFIX = "editprofile"
     }
 }

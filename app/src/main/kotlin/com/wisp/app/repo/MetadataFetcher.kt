@@ -65,6 +65,8 @@ class MetadataFetcher(
 
     companion object {
         private const val MAX_PROFILE_ATTEMPTS = 2
+        /** Upper bound on waiting for every relay a pay-list lookup went to. */
+        private const val LOOKUP_EOSE_TIMEOUT_MS = 8_000L
         private const val QUOTE_RETRY_MS = 30_000L // retry failed quotes after 30s
     }
 
@@ -199,12 +201,27 @@ class MetadataFetcher(
         val pubkeys = pendingPayPubkeys.toList()
         pendingPayPubkeys.clear()
         inFlightPay.addAll(pubkeys)
-        outboxRouter.requestPayTargets(subId, pubkeys)
+        val generation = relayPool.reconnectGeneration
+        val sent = outboxRouter.requestPayTargets(subId, pubkeys)
         scope.launch(processingContext) {
-            subManager.awaitEoseWithTimeout(subId)
+            // Wait for the relays the request went to, not just the first one, so a
+            // list held only by a slower relay still arrives before we close.
+            val eoseCount = subManager.awaitEoseCount(subId, sent, LOOKUP_EOSE_TIMEOUT_MS, generation)
             subManager.closeSubscription(subId)
-            payTargetRepo?.markChecked(pubkeys)
+            markLookupDone(pubkeys, eoseCount, generation)
             synchronized(pendingPayPubkeys) { inFlightPay.removeAll(pubkeys.toSet()) }
+        }
+    }
+
+    /**
+     * Stamps [pubkeys] as looked up only when at least one relay finished
+     * answering and the connection did not reset meanwhile. Otherwise nothing is
+     * stamped, so a later scroll asks again. Accounts whose list arrived were
+     * already stamped by [PayTargetRepository.updateFromEvent].
+     */
+    private fun markLookupDone(pubkeys: List<String>, eoseCount: Int, generation: Long) {
+        if (eoseCount > 0 && relayPool.reconnectGeneration == generation) {
+            payTargetRepo?.markChecked(pubkeys)
         }
     }
 
@@ -442,11 +459,15 @@ class MetadataFetcher(
         scope.launch(processingContext) {
             subManager.awaitEoseWithTimeout(subId)
             subManager.closeSubscription(subId)
-            // Profile requests include kind 10133, so these accounts' lists were looked up too.
-            payTargetRepo?.markChecked(pubkeys)
             synchronized(pendingProfilePubkeys) {
                 inFlightProfiles.removeAll(pubkeys.toSet())
             }
+            // Kind 10133 rides along here, but this batch closes on the first EOSE, so
+            // a list on a slower relay can be missed. Lists that arrived were stamped by
+            // PayTargetRepository.updateFromEvent; hand the rest to the pay lookup,
+            // which waits for more relays. The money button asked while this batch was
+            // in flight and was skipped, so nothing else would ask again.
+            pubkeys.forEach(::addToPendingPayTargets)
         }
     }
 
