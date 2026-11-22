@@ -80,6 +80,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -1044,11 +1045,13 @@ private fun MoneroContent(
                 }
             }
 
-            // Amount pills in XMR, then the custom "+" entry.
-            FlowRow(
+            // Amount pills in XMR, then the custom "+" entry, all on one row.
+            // The amount pills share the width; the custom amount itself shows
+            // in the field below, so the "+" pill stays one small size.
+            Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 presets.forEach { preset ->
                     PresetPill(
@@ -1058,10 +1061,11 @@ private fun MoneroContent(
                         onClick = {
                             selectedPreset = preset
                             isCustom = false
-                        }
+                        },
+                        modifier = Modifier.weight(1f),
+                        horizontalPadding = 4.dp
                     )
                 }
-                val customAmount = if (isCustom) amount else null
                 Surface(
                     modifier = Modifier.clickable {
                         isCustom = true
@@ -1070,24 +1074,14 @@ private fun MoneroContent(
                     shape = CircleShape,
                     color = if (isCustom) accent else MaterialTheme.colorScheme.surfaceVariant
                 ) {
-                    if (customAmount != null) {
-                        Text(
-                            stringResource(R.string.monero_amount_xmr, Monero.formatAmount(customAmount)),
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            color = inkOrWhite(accent),
-                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp)
-                        )
-                    } else {
-                        Icon(
-                            Icons.Filled.Add,
-                            contentDescription = stringResource(R.string.monero_custom_amount),
-                            tint = if (isCustom) inkOrWhite(accent) else MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier
-                                .padding(horizontal = 18.dp, vertical = 6.dp)
-                                .size(20.dp)
-                        )
-                    }
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = stringResource(R.string.monero_custom_amount),
+                        tint = if (isCustom) inkOrWhite(accent) else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .padding(horizontal = 14.dp, vertical = 8.dp)
+                            .size(20.dp)
+                    )
                 }
             }
 
@@ -1321,11 +1315,13 @@ private fun PresetPill(
     label: String,
     selected: Boolean,
     accent: Color,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    horizontalPadding: Dp = 18.dp
 ) {
     val onAccent = inkOrWhite(accent)
     Surface(
-        modifier = Modifier.clickable(onClick = onClick),
+        modifier = modifier.clickable(onClick = onClick),
         shape = CircleShape,
         color = if (selected) accent else MaterialTheme.colorScheme.surfaceVariant
     ) {
@@ -1334,7 +1330,10 @@ private fun PresetPill(
             style = MaterialTheme.typography.labelLarge,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             color = if (selected) onAccent else MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp)
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.padding(horizontal = horizontalPadding, vertical = 8.dp)
         )
     }
 }
