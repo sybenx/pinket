@@ -636,7 +636,7 @@
     <!-- Translation (UI for post content translation) -->
     <string name="settings_translation">Translation</string>
     <string name="settings_auto_translate">Auto-translate notes</string>
-    <string name="settings_auto_translate_description">Translate notes in languages you don\'t read when nothing needs downloading. Otherwise a one-tap hint shows on the note.</string>
+    <string name="settings_auto_translate_description">Notes in a language you\'ve downloaded translate by themselves. Other languages show a one-tap hint that downloads it.</string>
     <string name="settings_languages_you_read">Languages you read</string>
     <string name="settings_languages_you_read_description">Your phone\'s languages, plus any you add. Notes in these are never translated.</string>
     <string name="settings_languages_from_phone">From your phone: %s</string>

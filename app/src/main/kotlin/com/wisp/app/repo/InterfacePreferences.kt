@@ -83,7 +83,7 @@ class InterfacePreferences(context: Context) {
     fun isLiveStreamsHidden(): Boolean = prefs.getBoolean("live_streams_hidden", false)
     fun setLiveStreamsHidden(hidden: Boolean) = prefs.edit().putBoolean("live_streams_hidden", hidden).apply()
 
-    fun isAutoTranslate(): Boolean = prefs.getBoolean("auto_translate", false)
+    fun isAutoTranslate(): Boolean = prefs.getBoolean("auto_translate", true)
     fun setAutoTranslate(enabled: Boolean) = prefs.edit().putBoolean("auto_translate", enabled).apply()
 
     fun isPostUndoTimerEnabled(): Boolean = prefs.getBoolean("post_undo_timer_enabled", true)

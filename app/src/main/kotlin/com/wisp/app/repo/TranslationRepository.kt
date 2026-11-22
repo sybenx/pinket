@@ -62,8 +62,8 @@ val LocalTranslationRepository = staticCompositionLocalOf<TranslationRepository?
 /**
  * Translating posts: language from the post's NIP-32 tag, a language remembered for its author, or a guess from
  * its words (ML Kit, and your own LibreTranslate when the phone isn't sure). Posts on screen that aren't in a
- * language you read are translated at once when nothing needs downloading (and auto-translate is on), or get a
- * one-tap hint. A model is never downloaded without a tap.
+ * language you read are translated at once when that language is on the phone (and auto-translate is on, the
+ * default), or get a one-tap hint that downloads it. A model is never downloaded without a tap.
  */
 class TranslationRepository(
     context: Context,
@@ -84,6 +84,9 @@ class TranslationRepository(
     /** A fast scroll doesn't start dozens of detections and translations at once. */
     private val work = Semaphore(3)
     @Volatile private var models: Set<String>? = null
+    /** Posts showing a "Translate from X" hint, by id: once X is downloaded, they translate by themselves. */
+    private val hinted = ConcurrentHashMap<String, NostrEvent>()
+    @Volatile private var autoOn = true
 
     /** Coarse global counter for screens (bookmarks, thread, search...) that re-snapshot
      *  all visible translations at once. Feed screens use [stateFor] instead. */
@@ -175,6 +178,7 @@ class TranslationRepository(
      */
     suspend fun lookAt(event: NostrEvent, autoTranslate: Boolean) {
         if (event.content.isBlank() || event.pubkey == myPubkey()) return
+        autoOn = autoTranslate
         // A hint is looked at again once auto-translate is on: its model may be there by now.
         fun open(s: TranslationStatus) = s == TranslationStatus.IDLE || (autoTranslate && s == TranslationStatus.HINT)
         if (!open(getState(event.id).status)) return
@@ -199,9 +203,9 @@ class TranslationRepository(
                         TranslationPlan.Nothing -> {}
                         is TranslationPlan.Auto -> {
                             val out = translateText(event.content, plan.from, download = false)
-                            if (out != null) keep(event.id, out, plan.from) else publish(event.id, hint(plan.from))
+                            if (out != null) keep(event.id, out, plan.from) else { hinted[event.id] = event; publish(event.id, hint(plan.from)) }
                         }
-                        is TranslationPlan.Hint -> publish(event.id, hint(plan.from))
+                        is TranslationPlan.Hint -> { hinted[event.id] = event; publish(event.id, hint(plan.from)) }
                         is TranslationPlan.Pick -> publish(event.id, TranslationState(
                             status = TranslationStatus.PICK, likeliest = plan.likeliest
                         ))
@@ -278,7 +282,8 @@ class TranslationRepository(
                     publish(event.id, TranslationState(status = TranslationStatus.DOWNLOADING_MODEL, sourceLanguage = name, sourceCode = lang))
                 }
                 val out = translateText(event.content, lang, download = true)
-                if (out != null) keep(event.id, out, lang)
+                hinted.remove(event.id)
+                if (out != null) { keep(event.id, out, lang); translateHinted(lang) }
                 else if (lang == TranslationPreferences.target()) publish(event.id, TranslationState(
                     status = TranslationStatus.SAME_LANGUAGE, sourceLanguage = name, sourceCode = lang
                 ))
@@ -289,6 +294,23 @@ class TranslationRepository(
                 fail(event.id, previous)
             }
         }
+    }
+
+    /** [lang] is on the phone now: posts already hinting it translate by themselves (when auto-translate is on). */
+    private fun translateHinted(lang: String) {
+        if (!autoOn) return
+        val waiting = hinted.entries.filter { states[it.key]?.let { st -> st.status == TranslationStatus.HINT && st.sourceCode == lang } == true }
+        for ((id, ev) in waiting) {
+            hinted.remove(id)
+            scope.launch {
+                work.withPermit {
+                    try {
+                        translateText(ev.content, lang, download = false)?.let { keep(id, it, lang) }
+                    } catch (e: CancellationException) { throw e } catch (_: Exception) {}
+                }
+            }
+        }
+        if (hinted.size > 500) hinted.keys.take(hinted.size - 500).forEach { hinted.remove(it) }
     }
 
     private fun fail(eventId: String, previous: TranslationState) {
