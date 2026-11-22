@@ -13,6 +13,7 @@ import com.wisp.app.nostr.Nip69
 import com.wisp.app.nostr.Nip88
 import com.wisp.app.nostr.NostrEvent
 import com.wisp.app.nostr.NostrEvent.Companion.fromJson
+import com.wisp.app.nostr.NipA3
 import com.wisp.app.nostr.ProfileData
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -52,6 +53,8 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
         set(value) { _notePublisher.value = value }
 
     var metadataFetcher: MetadataFetcher? = null
+    /** NIP-A3 payment targets (kind 10133). Updates bump [profileVersionFor] for that account. */
+    var payTargetRepo: PayTargetRepository? = null
     var deletedEventsRepo: DeletedEventsRepository? = null
     var currentUserPubkey: String? = null
     var eventPersistence: EventPersistence? = null
@@ -496,7 +499,7 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
     @Volatile private var relaySourceDirtyFlag = false
     @Volatile private var pollVoteDirty = false
 
-    private val WOT_EXEMPT_KINDS = intArrayOf(0, 3, 4, 10002, 10050, 1059, 13, 14)
+    private val WOT_EXEMPT_KINDS = intArrayOf(0, 3, 4, 10002, 10050, 1059, 13, 14, NipA3.KIND_PAYMENT_TARGETS)
 
     fun isWotFiltered(pubkey: String, kind: Int): Boolean {
         if (safetyPrefs?.wotFilterEnabled?.value != true) return false
@@ -562,6 +565,7 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
                     updateAccountRegistryIfKnownAccount(event.pubkey, updated)
                 }
             }
+            NipA3.KIND_PAYMENT_TARGETS -> processPayTargets(event)
             1 -> {
                 // Only show root notes in feed, not replies
                 val isReply = Nip10.isReply(event)
@@ -1001,6 +1005,7 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
                 updateAccountRegistryIfKnownAccount(event.pubkey, updated)
             }
         }
+        if (event.kind == NipA3.KIND_PAYMENT_TARGETS) processPayTargets(event)
         // NIP-38: process user status in cacheEvent path too (addEvent dedup may skip it)
         if (event.kind == 30315) processUserStatus(event)
         _quotedEventVersion.value++
@@ -1272,6 +1277,36 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
     fun bumpEventCacheVersion() { _eventCacheVersion.value++ }
 
     fun getProfileData(pubkey: String): ProfileData? = profileRepo?.get(pubkey)
+
+    private fun processPayTargets(event: NostrEvent) {
+        if (payTargetRepo?.updateFromEvent(event) != null) {
+            profileDirty = true
+            markProfileVersionDirty(event.pubkey)
+        }
+    }
+
+    /** Newest in-memory event of [kind] by [pubkey]. Scans the cache; for one-off use (saving), not composition. */
+    fun newestCachedEvent(kind: Int, pubkey: String): NostrEvent? =
+        eventCache.values.asSequence()
+            .filter { it.kind == kind && it.pubkey == pubkey }
+            .maxByOrNull { it.created_at }
+
+    /** Newest kind 10133 list known for [pubkey], or null. Memory/prefs only. */
+    fun getPayTargets(pubkey: String): PayTargetList? = payTargetRepo?.get(pubkey)
+
+    /**
+     * What [pubkey] can be paid with: Bitcoin when the profile has a lightning
+     * address, Monero when their kind 10133 lists a valid address. Changes are
+     * signalled through [profileVersionFor], the same as profile changes.
+     */
+    fun getPayOptions(pubkey: String): PayOptions =
+        PayOptions.of(getProfileData(pubkey), getPayTargets(pubkey))
+
+    /** Queue a kind 10133 lookup for [pubkey] unless one finished recently. Cheap to call often. */
+    fun requestPayTargetsIfMissing(pubkey: String) {
+        if (payTargetRepo?.needsLookup(pubkey) != true) return
+        metadataFetcher?.addToPendingPayTargets(pubkey)
+    }
 
     /**
      * Keep the drawer's account switcher in sync with the newest kind 0 for

@@ -9,6 +9,7 @@ import androidx.compose.runtime.remember
 import com.wisp.app.nostr.NostrEvent
 import com.wisp.app.nostr.ProfileData
 import com.wisp.app.repo.EventRepository
+import com.wisp.app.repo.PayOptions
 
 @Composable
 internal fun rememberProfile(
@@ -24,6 +25,24 @@ internal fun rememberProfile(
         eventRepo.requestProfileIfMissing(pubkey, relayHints)
     }
     return remember(eventRepo, pubkey, version) { eventRepo.getProfileData(pubkey) }
+}
+
+/**
+ * What [pubkey] can be paid with (Bitcoin via lightning address, Monero via their
+ * kind 10133 list). Recomposes when either the profile or the pay list changes, and
+ * queues a pay-list lookup if one has not finished recently. Use this for the money
+ * button: it reflects only what the author accepts.
+ */
+@Composable
+internal fun rememberPayOptions(eventRepo: EventRepository?, pubkey: String?): PayOptions {
+    if (eventRepo == null || pubkey == null) return PayOptions.NONE
+    val version by remember(eventRepo, pubkey) {
+        eventRepo.profileVersionFor(pubkey)
+    }.collectAsState(initial = 0)
+    LaunchedEffect(eventRepo, pubkey) {
+        eventRepo.requestPayTargetsIfMissing(pubkey)
+    }
+    return remember(eventRepo, pubkey, version) { eventRepo.getPayOptions(pubkey) }
 }
 
 @Composable

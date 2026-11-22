@@ -13,6 +13,7 @@ import com.wisp.app.nostr.Nip10
 import com.wisp.app.nostr.Nip22
 import com.wisp.app.nostr.Nip51
 import com.wisp.app.nostr.Nip65
+import com.wisp.app.nostr.NipA3
 import com.wisp.app.nostr.SimpleGroupEntry
 import com.wisp.app.nostr.LocalSigner
 import com.wisp.app.nostr.NostrEvent
@@ -283,7 +284,8 @@ class UserProfileViewModel(app: Application) : AndroidViewModel(app) {
         outboxRouter?.requestMissingRelayLists(listOf(pubkey))
 
         // Request fresh profile, posts, follow list, and relay list
-        val profileFilter = Filter(kinds = listOf(0), authors = listOf(pubkey), limit = 1)
+        // Kind 10133 (payment targets) rides along so the profile's money button knows about Monero.
+        val profileFilter = Filter(kinds = listOf(0, NipA3.KIND_PAYMENT_TARGETS), authors = listOf(pubkey), limit = 2)
         val postsFilter = Filter(kinds = listOf(1, Nip22.KIND_COMMENT, 6, 1068, 6969, 30023, 20, 21, 22), authors = listOf(pubkey), limit = 50)
         // Gallery posts can be old and curated — fetch separately with no since filter, higher limit
         val galleryFilter = Filter(kinds = listOf(20, 21, 22), authors = listOf(pubkey), limit = 100)
@@ -475,9 +477,9 @@ class UserProfileViewModel(app: Application) : AndroidViewModel(app) {
                                     val subId = if (index == 0) "followprofiles" else "followprofiles-$index"
                                     activeFollowProfileSubIds.add(subId)
                                     val profileReq = Filter(
-                                        kinds = listOf(0),
+                                        kinds = listOf(0, NipA3.KIND_PAYMENT_TARGETS),
                                         authors = batch,
-                                        limit = batch.size
+                                        limit = batch.size * 2
                                     )
                                     relayPool.sendToAll(
                                         ClientMessage.req(subId, profileReq)
@@ -513,6 +515,7 @@ class UserProfileViewModel(app: Application) : AndroidViewModel(app) {
                                 router.subscribeToUserWriteRelays("userfollows", pubkey, followFilter)
                             }
                         }
+                        NipA3.KIND_PAYMENT_TARGETS -> eventRepo.cacheEvent(event)
                         Nip51.KIND_SIMPLE_GROUPS -> {
                             val parsed = Nip51.parseSimpleGroups(event)
                             if (parsed.isNotEmpty()) {

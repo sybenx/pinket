@@ -16,6 +16,7 @@ import com.wisp.app.nostr.Nip51
 import com.wisp.app.nostr.Nip57
 import com.wisp.app.nostr.Nip88
 import com.wisp.app.nostr.Nip65
+import com.wisp.app.nostr.NipA3
 import com.wisp.app.nostr.NostrEvent
 import com.wisp.app.nostr.NostrSigner
 import com.wisp.app.nostr.toHex
@@ -653,7 +654,8 @@ class EventRouter(
             Nip51.KIND_MUTE_LIST, Nip51.KIND_SIMPLE_GROUPS, Nip51.KIND_BOOKMARK_LIST,
             Nip51.KIND_PIN_LIST, Blossom.KIND_SERVER_LIST, Nip51.KIND_FOLLOW_SET,
             Nip51.KIND_INTEREST_SET, Nip51.KIND_BOOKMARK_SET, Nip51.KIND_RELAY_SET,
-            Nip51.KIND_FAVORITE_RELAYS, Nip30.KIND_USER_EMOJI_LIST, Nip30.KIND_EMOJI_SET
+            Nip51.KIND_FAVORITE_RELAYS, Nip30.KIND_USER_EMOJI_LIST, Nip30.KIND_EMOJI_SET,
+            NipA3.KIND_PAYMENT_TARGETS
         )
     }
 

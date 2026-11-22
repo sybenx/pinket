@@ -8,6 +8,7 @@ import com.wisp.app.nostr.Nip22
 import com.wisp.app.nostr.Nip30
 import com.wisp.app.nostr.Nip51
 import com.wisp.app.db.EventPersistence
+import com.wisp.app.nostr.NipA3
 import com.wisp.app.relay.OutboxRouter
 import com.wisp.app.relay.RelayConfig
 import com.wisp.app.relay.RelayHealthTracker
@@ -559,7 +560,8 @@ class StartupCoordinator(
             0, 3, 10002, 10050, 10007, 10006,
             Nip51.KIND_FAVORITE_RELAYS, Nip51.KIND_MUTE_LIST, Nip51.KIND_PIN_LIST,
             Nip51.KIND_BOOKMARK_LIST, Blossom.KIND_SERVER_LIST,
-            Nip51.KIND_SIMPLE_GROUPS, Nip30.KIND_USER_EMOJI_LIST
+            Nip51.KIND_SIMPLE_GROUPS, Nip30.KIND_USER_EMOJI_LIST,
+            NipA3.KIND_PAYMENT_TARGETS
         )
         // Parameterized replaceable events (many per kind per author):
         val addressableKinds = listOf(

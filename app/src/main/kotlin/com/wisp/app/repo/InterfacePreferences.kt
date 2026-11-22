@@ -125,6 +125,19 @@ class InterfacePreferences(context: Context) {
     fun getQuickZapMessage(): String = prefs.getString("quick_zap_message", "") ?: ""
     fun setQuickZapMessage(message: String) = prefs.edit().putString("quick_zap_message", message).apply()
 
+    // ── Send sheet memory (Bitcoin / Monero) ───────────────────────────────
+    // The sheet opens on the method used last when the recipient takes more than
+    // one. Only write this when the person actually had a choice.
+
+    fun getLastPayMethod(): PayMethod? = PayMethod.fromKey(prefs.getString("last_pay_method", null))
+    fun setLastPayMethod(method: PayMethod) = prefs.edit().putString("last_pay_method", method.key).apply()
+
+    /** Last Monero amount used, in XMR, or null if none yet. */
+    fun getLastMoneroAmount(): java.math.BigDecimal? =
+        prefs.getString("last_monero_amount", null)?.let { com.wisp.app.util.Monero.parseAmount(it) }
+    fun setLastMoneroAmount(amount: java.math.BigDecimal) =
+        prefs.edit().putString("last_monero_amount", com.wisp.app.util.Monero.formatAmount(amount)).apply()
+
     companion object {
         val postUndoTimerOptions = listOf(5, 10, 15, 20, 30)
         const val QUICK_ZAP_MAX_SATS = 10_000L
