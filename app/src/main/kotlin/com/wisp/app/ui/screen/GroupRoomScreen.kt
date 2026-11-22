@@ -1649,6 +1649,8 @@ private fun GroupMessageBubble(
                     ) {
                     Spacer(Modifier.width(4.dp))
                     if (onZap != null) {
+                        // Monero-only sender: the Monero mark, and the send sheet opens on Monero.
+                        val moneroOnly = com.wisp.app.ui.component.rememberMoneroOnly(eventRepo, message.senderPubkey)
                         GroupChatCamPanelButton(
                             modifier = Modifier.width(82.dp),
                             enabled = !isZapInProgress,
@@ -1657,7 +1659,14 @@ private fun GroupMessageBubble(
                                 onZap(message.id, message.senderPubkey)
                             },
                             icon = {
-                                if (useZapBoltIcon) {
+                                if (moneroOnly) {
+                                    Icon(
+                                        painterResource(R.drawable.ic_monero),
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                } else if (useZapBoltIcon) {
                                     Icon(
                                         Icons.Outlined.FlashOn,
                                         contentDescription = null,
@@ -1673,7 +1682,8 @@ private fun GroupMessageBubble(
                                     )
                                 }
                             },
-                            label = stringResource(R.string.group_room_eyebrow_zap)
+                            label = if (moneroOnly) stringResource(R.string.pay_method_monero)
+                                else stringResource(R.string.group_room_eyebrow_zap)
                         )
                     }
                     if (showFollow) {

@@ -1757,7 +1757,8 @@ fun WispNavHost(
                     canPrivateZap = feedViewModel.hasLocalKeypair && feedViewModel.relayPool.hasDmRelays() && recipientHasDmRelays,
                     initialSatsHint = groupRoomZapInitialSats,
                     recipientPubkey = groupRoomZapTarget?.pubkey,
-                    profileLookup = { feedViewModel.profileRepo.get(it) }
+                    profileLookup = { feedViewModel.profileRepo.get(it) },
+                    payOptions = rememberPayOptions(feedViewModel.eventRepo, zapRecipient)
                 )
             }
             val groupRoomMediaLauncher = rememberLauncherForActivityResult(
