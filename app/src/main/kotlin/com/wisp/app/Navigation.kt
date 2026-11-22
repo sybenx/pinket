@@ -2774,7 +2774,10 @@ fun WispNavHost(
                     // (the chat host is what's interesting to identify), else
                     // fall back to the post author.
                     recipientPubkey = liveZapRecipientOverride ?: liveZapTarget?.pubkey,
-                    profileLookup = { feedViewModel.profileRepo.get(it) }
+                    profileLookup = { feedViewModel.profileRepo.get(it) },
+                    // Chat messages only: a stream zap goes to the stream, not a chat author.
+                    payOptions = rememberPayOptions(feedViewModel.eventRepo, zapRecipient)
+                        .takeIf { liveZapATag == null && liveZapRecipientOverride == null }
                 )
             }
             val streamActivityEventId = remember(hostPubkey, dTag) {

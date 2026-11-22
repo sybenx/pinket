@@ -815,26 +815,43 @@ private fun LiveChatBubble(
                     }
                     // Zap + burst animation
                     if (onZap != null) {
+                        // Monero-only sender: the Monero mark, neutral, no total; the send sheet opens on Monero.
+                        val moneroOnly = com.wisp.app.ui.component.rememberMoneroOnly(eventRepo, message.senderPubkey)
                         Box(
                             modifier = Modifier
                                 .size(28.dp)
                                 .wrapContentSize(unbounded = true, align = Alignment.Center)
                         ) {
-                            Icon(
-                                Icons.Filled.Bolt,
-                                contentDescription = "Zap",
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .clickable(enabled = !isZapInProgress) {
-                                        onZap(message.id, message.senderPubkey)
+                            if (moneroOnly) {
+                                Icon(
+                                    androidx.compose.ui.res.painterResource(com.wisp.app.R.drawable.ic_monero),
+                                    contentDescription = androidx.compose.ui.res.stringResource(com.wisp.app.R.string.cd_monero),
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clickable(enabled = !isZapInProgress) {
+                                            onZap(message.id, message.senderPubkey)
+                                        }
+                                        .padding(6.dp),
+                                    tint = if (isZapInProgress) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                        else iconTint
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Filled.Bolt,
+                                    contentDescription = "Zap",
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clickable(enabled = !isZapInProgress) {
+                                            onZap(message.id, message.senderPubkey)
+                                        }
+                                        .padding(5.dp),
+                                    tint = when {
+                                        isZapInProgress -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                        hasZaps || isZapAnimating -> com.wisp.app.ui.theme.WispThemeColors.zapColor
+                                        else -> iconTint
                                     }
-                                    .padding(5.dp),
-                                tint = when {
-                                    isZapInProgress -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                                    hasZaps || isZapAnimating -> com.wisp.app.ui.theme.WispThemeColors.zapColor
-                                    else -> iconTint
-                                }
-                            )
+                                )
+                            }
                             Box(
                                 modifier = Modifier
                                     .matchParentSize()
@@ -846,7 +863,7 @@ private fun LiveChatBubble(
                                 )
                             }
                         }
-                        if (hasZaps) {
+                        if (hasZaps && !moneroOnly) {
                             Text(
                                 text = formatZapSats(zapSats),
                                 style = MaterialTheme.typography.labelSmall,
