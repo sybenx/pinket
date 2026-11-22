@@ -173,7 +173,8 @@ class ThreadViewModel : ViewModel() {
         votesObserverJob?.cancel()
         votesObserverJob = spamVotes?.let { repo ->
             viewModelScope.launch {
-                repo.version.drop(1).collect { scheduleRebuild() }
+                // A vote is the reader's own change: let the list show it at once.
+                repo.version.drop(1).collect { listHolder.expectChange(); scheduleRebuild() }
             }
         }
         // Rebuild when the follows-graph reply signals finish loading.
