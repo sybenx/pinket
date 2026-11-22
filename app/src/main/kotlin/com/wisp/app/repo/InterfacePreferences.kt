@@ -32,7 +32,7 @@ class InterfacePreferences(context: Context) {
 
     private val prefs = context.getSharedPreferences("wisp_settings", Context.MODE_PRIVATE)
 
-    fun getAccentColor(): Int = prefs.getInt("accent_color", 0xFFFF6B5E.toInt())
+    fun getAccentColor(): Int = prefs.getInt("accent_color", 0xFFFF8A3D.toInt())
     fun setAccentColor(colorInt: Int) = prefs.edit().putInt("accent_color", colorInt).apply()
 
     fun isLargeText(): Boolean = prefs.getBoolean("large_text", false)

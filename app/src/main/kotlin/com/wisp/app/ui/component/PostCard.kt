@@ -1331,7 +1331,7 @@ internal fun Nip05Badge(
     nip05Repo: Nip05Repository?,
     onClick: (() -> Unit)? = null,
     maxLines: Int = 1,
-    verifiedTint: Color = MaterialTheme.colorScheme.primary,
+    verifiedTint: Color = WispThemeColors.hintColor,
     iconLeading: Boolean = false,
     /** When false, render only the verification icon — no handle text. The handle itself
      *  is reserved for the profile screen; everywhere else (feed, threads, comments) just

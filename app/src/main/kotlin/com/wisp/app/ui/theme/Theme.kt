@@ -23,7 +23,8 @@ val LocalWispColors = androidx.compose.runtime.staticCompositionLocalOf {
         repostColor = Color.Unspecified,
         bookmarkColor = Color.Unspecified,
         paidColor = Color.Unspecified,
-        signatureBrush = SolidColor(Color.Unspecified)
+        signatureBrush = SolidColor(Color.Unspecified),
+        hintColor = Color.Unspecified
     )
 }
 
@@ -34,7 +35,8 @@ data class WispColors(
     val bookmarkColor: Color,
     val paidColor: Color,
     /** Opal gradient on the pinket theme, solid primary on every other theme. */
-    val signatureBrush: Brush
+    val signatureBrush: Brush,
+    val hintColor: Color
 )
 
 object WispThemeColors {
@@ -43,7 +45,10 @@ object WispThemeColors {
     val repostColor: Color @Composable get() = LocalWispColors.current.repostColor
     val bookmarkColor: Color @Composable get() = LocalWispColors.current.bookmarkColor
     val paidColor: Color @Composable get() = LocalWispColors.current.paidColor
+    /** Fill for accent-filled shapes. */
     val signatureBrush: Brush @Composable get() = LocalWispColors.current.signatureBrush
+    /** Small marks and corner lines (verified, liked, unread): pink on the default accent, the accent otherwise. */
+    val hintColor: Color @Composable get() = LocalWispColors.current.hintColor
 }
 
 @Composable
@@ -86,7 +91,7 @@ private val WispTypographyLarge = Typography(
 @Composable
 fun WispTheme(
     isDarkTheme: Boolean = true,
-    accentColor: Color = Color(0xFFFF6B5E),
+    accentColor: Color = PinketOrange,
     isLargeText: Boolean = false,
     themeName: String = "custom",
     content: @Composable () -> Unit
@@ -108,17 +113,23 @@ fun WispTheme(
         }
     }
 
-    val wispColors = remember(preset, isDarkTheme, colorScheme) {
+    val wispColors = remember(preset, isDarkTheme, colorScheme, accentColor) {
         val pinket = if (isDarkTheme) PinketWispDark else PinketWispLight
         when (preset.name) {
             // Zap and bookmark follow the accent, repost is green.
-            "custom" -> pinket.copy(
-                zapColor = colorScheme.primary,
-                repostColor = if (isDarkTheme) Color(0xFF4CAF50) else Color(0xFF2E7D32),
-                bookmarkColor = colorScheme.primary,
-                paidColor = if (isDarkTheme) Color(0xFFFFD54F) else Color(0xFFC9A000),
-                signatureBrush = SolidColor(colorScheme.primary)
-            )
+            // The two-tone look belongs to the default accent; a chosen
+            // accent stays one flat color.
+            "custom" -> {
+                val twoTone = accentColor.toArgb() == PinketOrange.toArgb()
+                pinket.copy(
+                    zapColor = colorScheme.primary,
+                    repostColor = if (isDarkTheme) Color(0xFF4CAF50) else Color(0xFF2E7D32),
+                    bookmarkColor = colorScheme.primary,
+                    paidColor = if (isDarkTheme) Color(0xFFFFD54F) else Color(0xFFC9A000),
+                    signatureBrush = SolidColor(colorScheme.primary),
+                    hintColor = if (twoTone) PinketTwoTone.hint(isDarkTheme) else colorScheme.primary
+                )
+            }
             else -> {
                 val colors = if (isDarkTheme) preset.dark else preset.light
                 WispColors(
@@ -127,7 +138,8 @@ fun WispTheme(
                     repostColor = colors.repostColor,
                     bookmarkColor = colors.bookmarkColor,
                     paidColor = colors.paidColor,
-                    signatureBrush = SolidColor(colorScheme.primary)
+                    signatureBrush = SolidColor(colorScheme.primary),
+                    hintColor = colorScheme.primary
                 )
             }
         }

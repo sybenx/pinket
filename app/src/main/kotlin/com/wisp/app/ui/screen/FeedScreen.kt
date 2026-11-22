@@ -1,5 +1,6 @@
 package com.wisp.app.ui.screen
 
+import androidx.compose.ui.graphics.Color
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -128,6 +129,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.itemsIndexed
 import com.wisp.app.ui.theme.WispThemeColors
+import com.wisp.app.ui.theme.cornerRim
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.outlined.CurrencyBitcoin
@@ -1030,7 +1032,9 @@ fun FeedScreen(
                         onClick = onCompose,
                         shape = CircleShape,
                         containerColor = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.graphicsLayer { alpha = fabAlpha }
+                        modifier = Modifier
+                            .graphicsLayer { alpha = fabAlpha }
+                            .cornerRim(WispThemeColors.hintColor, MaterialTheme.colorScheme.primary)
                     ) {
                         Icon(Icons.Default.Edit, contentDescription = "New post")
                     }
@@ -2374,7 +2378,9 @@ private fun NewNotesButton(
                 color = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
                 shadowElevation = 4.dp,
-                modifier = Modifier.combinedClickable(
+                modifier = Modifier
+                    .cornerRim(WispThemeColors.hintColor, MaterialTheme.colorScheme.primary)
+                    .combinedClickable(
                     onClick = onClick,
                     onLongClick = { showMenu = true }
                 )

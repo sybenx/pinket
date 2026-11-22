@@ -1,5 +1,7 @@
 package com.wisp.app.ui.screen
 
+import com.wisp.app.ui.theme.WispThemeColors
+import com.wisp.app.ui.theme.cornerRim
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -558,9 +560,11 @@ private fun SearchTab(
 ) {
     Box(
         modifier = modifier
-            .background(
-                if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                RoundedCornerShape(50)
+            .then(
+                if (selected) Modifier
+                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(50))
+                    .cornerRim(WispThemeColors.hintColor, MaterialTheme.colorScheme.primary)
+                else Modifier
             )
             .clickable(onClick = onClick)
             .padding(vertical = 10.dp),

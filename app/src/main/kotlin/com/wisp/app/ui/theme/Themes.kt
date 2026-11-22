@@ -10,8 +10,8 @@ object Themes {
             name = "custom",
             displayName = "Custom",
             dark = ThemeColors(
-                primary = Color(0xFFFF6B5E),
-                secondary = Color(0xFFFF9C92),
+                primary = Color(0xFFFF8A3D),
+                secondary = Color(0xFFFF4F9A),
                 background = Color(0xFF0A0A0A),
                 surface = Color(0xFF1C1C1C),
                 surfaceVariant = Color(0xFF262626),
@@ -21,12 +21,12 @@ object Themes {
                 outline = Color(0xFF383838),
                 zapColor = Color(0xFFFF8A3D),
                 repostColor = Color(0xFF2ED3C6),
-                bookmarkColor = Color(0xFFFF6B5E),
+                bookmarkColor = Color(0xFFFF8A3D),
                 paidColor = Color(0xFFFFC36A)
             ),
             light = ThemeColors(
-                primary = Color(0xFFC0392B),
-                secondary = Color(0xFFFF9C92),
+                primary = Color(0xFFA84B0C),
+                secondary = Color(0xFFFF4F9A),
                 background = Color(0xFFECECEC),
                 surface = Color(0xFFF5F5F5),
                 surfaceVariant = Color(0xFFE0E0E0),
@@ -36,7 +36,7 @@ object Themes {
                 outline = Color(0xFFCCCCCC),
                 zapColor = Color(0xFFA84B0C),
                 repostColor = Color(0xFF00756B),
-                bookmarkColor = Color(0xFFC0392B),
+                bookmarkColor = Color(0xFFA84B0C),
                 paidColor = Color(0xFF8A6100)
             )
         ),

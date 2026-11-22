@@ -1,5 +1,6 @@
 package com.wisp.app.ui.screen
 
+import com.wisp.app.ui.theme.WispThemeColors
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -1498,7 +1499,7 @@ private fun ProfileHeader(
                 nip05 = nip05,
                 pubkey = pubkey,
                 nip05Repo = nip05Repo,
-                verifiedTint = MaterialTheme.colorScheme.primary,
+                verifiedTint = WispThemeColors.hintColor,
                 iconLeading = true
             )
         }

@@ -1,5 +1,6 @@
 package com.wisp.app.ui.component
 
+import com.wisp.app.ui.theme.WispThemeColors
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
@@ -148,16 +149,13 @@ fun WispBottomBar(
                             )
                         }
                         if (hasUnread) {
-                            // Notification dot uses iOS-standard badge red
-                            // (#FF3B30) instead of the primary accent so it
-                            // reads as "alert" rather than "branded highlight."
                             Box(
                                 modifier = Modifier
                                     .size(8.dp)
                                     .align(Alignment.TopEnd)
                                     .offset(x = 2.dp, y = (-2).dp)
                                     .background(
-                                        color = Color(0xFFFF3B30),
+                                        color = WispThemeColors.hintColor,
                                         shape = CircleShape
                                     )
                             )

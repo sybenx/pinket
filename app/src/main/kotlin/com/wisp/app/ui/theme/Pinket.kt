@@ -1,5 +1,12 @@
 package com.wisp.app.ui.theme
 
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.Shapes
@@ -108,37 +115,46 @@ val PinketShapes = Shapes(
     extraLarge = RoundedCornerShape(20.dp)
 )
 
-private val OpalStopsDark = listOf(Color(0xFFFF8A3D), Color(0xFFFF4F9A), Color(0xFF2ED3C6))
-private val OpalStopsLight = listOf(Color(0xFFA84B0C), Color(0xFFC2185B), Color(0xFF00756B))
+/** Pinket's default accent: the lantern's orange. */
+val PinketOrange = Color(0xFFFF8A3D)
+private val PinketPinkDark = Color(0xFFFF4F9A)
+private val PinketPinkLight = Color(0xFFC2185B)
 
-// Allocated once per mode; callers share these instances. Explicit stops hold
-// pink through the middle and keep the pink to turquoise blend short, so the
-// muddy sRGB midpoint never spans a whole wordmark glyph.
-private fun opalBrush(stops: List<Color>): Brush {
-    val (orange, pink, turquoise) = stops
-    return Brush.horizontalGradient(
-        0f to orange,
-        0.42f to pink,
-        0.60f to pink,
-        0.74f to turquoise,
-        1f to turquoise
-    )
+object PinketTwoTone {
+    fun hint(dark: Boolean): Color = if (dark) PinketPinkDark else PinketPinkLight
 }
 
-private val OpalBrushDark: Brush = opalBrush(OpalStopsDark)
-private val OpalBrushLight: Brush = opalBrush(OpalStopsLight)
+/**
+ * A rim of [color] on the inside of a pill's or circle's own edge, at two
+ * opposite corners (bottom left and top right), fading out along the edge
+ * between them. Drawn over the content, so it works on Material surfaces.
+ * Draws nothing when [color] is unspecified or equals [fill], so a theme
+ * without a second tone shows a plain shape.
+ */
+fun Modifier.cornerRim(color: Color, fill: Color): Modifier =
+    if (color == Color.Unspecified || color == fill) this
+    else drawWithCache {
+        val width = 0.75.dp.toPx()
+        val inset = width / 2f
+        val clear = color.copy(alpha = 0f)
+        val tint = color.copy(alpha = 0.6f)
+        // Runs corner to corner; pink holds at both ends and is gone through the middle.
+        val brush = Brush.linearGradient(
+            0f to tint, 0.08f to tint, 0.36f to clear,
+            0.64f to clear, 0.92f to tint, 1f to tint,
+            start = Offset(0f, size.height),
+            end = Offset(size.width, 0f)
+        )
+        val radius = CornerRadius(size.minDimension / 2f - inset)
+        val rimSize = Size(size.width - width, size.height - width)
+        val stroke = Stroke(width = width)
+        onDrawWithContent {
+            drawContent()
+            drawRoundRect(brush, Offset(inset, inset), rimSize, radius, style = stroke)
+        }
+    }
 
-/** The Pinket signature gradient: orange, pink, turquoise, left to right. */
-object PinketOpal {
-    val stopsDark: List<Color> get() = OpalStopsDark
-    val stopsLight: List<Color> get() = OpalStopsLight
-
-    fun stops(dark: Boolean): List<Color> = if (dark) OpalStopsDark else OpalStopsLight
-
-    fun brush(dark: Boolean): Brush = if (dark) OpalBrushDark else OpalBrushLight
-}
-
-// Declared after the opal brushes: top-level vals initialize in file order.
+// Declared after the brushes: top-level vals initialize in file order.
 /** Pinket extra colors (paid has no ColorScheme role). */
 internal val PinketWispDark = WispColors(
     backgroundColor = Color(0xFF0A0A0A),
@@ -146,7 +162,8 @@ internal val PinketWispDark = WispColors(
     repostColor = Color(0xFF2ED3C6),
     bookmarkColor = Color(0xFFFF4F9A),
     paidColor = Color(0xFFFFC36A),
-    signatureBrush = PinketOpal.brush(dark = true)
+    signatureBrush = SolidColor(PinketOrange),
+    hintColor = PinketPinkDark
 )
 
 internal val PinketWispLight = WispColors(
@@ -155,7 +172,8 @@ internal val PinketWispLight = WispColors(
     repostColor = Color(0xFF00756B),
     bookmarkColor = Color(0xFFC2185B),
     paidColor = Color(0xFF8A6100),
-    signatureBrush = PinketOpal.brush(dark = false)
+    signatureBrush = SolidColor(Color(0xFFA84B0C)),
+    hintColor = PinketPinkLight
 )
 
 private fun contrast(fg: Color, bg: Color): Double =
