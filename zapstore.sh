@@ -57,7 +57,7 @@ if [ -n "$DRY" ]; then cat "$W"/u0.json "$W"/u1.json "$W"/u2.json; echo; echo "A
 # listing that names it is accepted.
 if [ -n "$APK" ]; then
   NOW=$(date +%s)
-  keykin sign "{\"kind\":24242,\"created_at\":$NOW,\"content\":\"Upload APK\",\"tags\":[[\"t\",\"upload\"],[\"x\",\"$HASH\"],[\"expiration\",\"$((NOW + 900))\"]]}" > "$W/auth.json"
+  keykin sign --for "Pinket release" "{\"kind\":24242,\"created_at\":$NOW,\"content\":\"Upload APK\",\"tags\":[[\"t\",\"upload\"],[\"x\",\"$HASH\"],[\"expiration\",\"$((NOW + 900))\"]]}" > "$W/auth.json"
   AUTH=$(python3 -c "import json,base64,sys;print(base64.b64encode(json.dumps(json.load(open(sys.argv[1])),separators=(',',':')).encode()).decode())" "$W/auth.json")
   CODE=$(curl -s -o "$W/up.out" -D "$W/up.hdr" -w '%{http_code}' -X PUT "$CDN/upload" -H "Authorization: Nostr $AUTH" \
     -H "Content-Digest: $HASH" -H "Content-Type: application/vnd.android.package-archive" --data-binary @"$APK")
@@ -66,7 +66,7 @@ if [ -n "$APK" ]; then
 fi
 
 for n in 0 1 2; do
-  keykin sign - < "$W/u$n.json" > "$W/s$n.json"
+  keykin sign --for "Pinket release" - < "$W/u$n.json" > "$W/s$n.json"
   nak event "$RELAY" < "$W/s$n.json" 2>&1 | grep -v '^{' | tail -1
 done
 echo "Sent. A new version can take a few minutes to show."
