@@ -3026,6 +3026,7 @@ fun WispNavHost(
 
             BookmarksScreen(
                 bookmarkedIds = bookmarkedIds,
+                listHolder = feedViewModel.bookmarksListHolder,
                 eventRepo = feedViewModel.eventRepo,
                 userPubkey = feedViewModel.getUserPubkey(),
                 onBack = { navController.popBackStack() },
@@ -3039,7 +3040,11 @@ fun WispNavHost(
                 },
                 onReact = { event, emoji -> feedViewModel.toggleReaction(event, emoji) },
                 onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
-                onRemoveBookmark = { eventId -> feedViewModel.setBookmarked(eventId, wanted = false) },
+                onRemoveBookmark = { eventId ->
+                    // The reader's own removal: show it at once instead of holding the row.
+                    feedViewModel.bookmarksListHolder.expectChange()
+                    feedViewModel.setBookmarked(eventId, wanted = false)
+                },
                 onToggleFollow = { pubkey -> feedViewModel.toggleFollow(pubkey) },
                 onBlockUser = { pubkey -> feedViewModel.blockUser(pubkey) },
                 translationRepo = feedViewModel.translationRepo,
@@ -3068,8 +3073,13 @@ fun WispNavHost(
                 feedViewModel.bookmarkSetRepo.getSet(setPubkey, dTag)
             }
 
+            val setListHolder = remember(setPubkey, dTag) {
+                feedViewModel.bookmarkSetListHolder(setPubkey, dTag)
+            }
+
             BookmarkSetScreen(
                 bookmarkSet = bookmarkSet,
+                listHolder = setListHolder,
                 eventRepo = feedViewModel.eventRepo,
                 userPubkey = feedViewModel.getUserPubkey(),
                 isOwnList = isOwnList,
@@ -3089,6 +3099,8 @@ fun WispNavHost(
                 onReact = { event, emoji -> feedViewModel.toggleReaction(event, emoji) },
                 onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
                 onRemoveFromSet = if (isOwnList) { eventId ->
+                    // The reader's own removal: show it at once instead of holding the row.
+                    setListHolder.expectChange()
                     feedViewModel.removeNoteFromBookmarkSet(dTag, eventId)
                 } else null,
                 onToggleFollow = { pubkey -> feedViewModel.toggleFollow(pubkey) },

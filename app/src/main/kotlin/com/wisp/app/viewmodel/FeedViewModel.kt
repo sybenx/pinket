@@ -438,6 +438,17 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     /** Keeps the feed rows on screen in place while the feed changes; outlives the screen. */
     val feedListHolder = com.wisp.app.ui.util.StableListHolder<NostrEvent>(keyOf = { it.id })
 
+    /** Keeps the bookmarks rows on screen in place while their notes come in; outlives the screen. */
+    val bookmarksListHolder = com.wisp.app.ui.util.StableListHolder<NostrEvent>(keyOf = { it.id })
+
+    private val bookmarkSetListHolders = HashMap<String, com.wisp.app.ui.util.StableListHolder<NostrEvent>>()
+
+    /** The same, one per bookmark set, so each set comes back to its own row. */
+    fun bookmarkSetListHolder(pubkey: String, dTag: String): com.wisp.app.ui.util.StableListHolder<NostrEvent> =
+        bookmarkSetListHolders.getOrPut("$pubkey:$dTag") {
+            com.wisp.app.ui.util.StableListHolder<NostrEvent>(keyOf = { it.id })
+        }
+
     val liveNowStreams: StateFlow<List<com.wisp.app.repo.LiveStream>> = liveStreamRepo.liveStreams
         .map { streams ->
             streams.values

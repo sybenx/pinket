@@ -1,6 +1,7 @@
 package com.wisp.app.ui.screen
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -9,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -27,16 +29,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import com.wisp.app.nostr.BookmarkSet
 import com.wisp.app.nostr.NostrEvent
 import com.wisp.app.repo.EventRepository
 import com.wisp.app.repo.TranslationRepository
+import com.wisp.app.ui.component.HeldRowsPill
 import com.wisp.app.ui.component.PostCard
+import com.wisp.app.ui.util.StableListHolder
+import com.wisp.app.ui.util.bind
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BookmarkSetScreen(
     bookmarkSet: BookmarkSet?,
+    listHolder: StableListHolder<NostrEvent>,
     eventRepo: EventRepository,
     userPubkey: String?,
     isOwnList: Boolean,
@@ -62,6 +69,11 @@ fun BookmarkSetScreen(
             ?.sortedByDescending { it.created_at }
             ?: emptyList()
     }
+
+    // Rows on screen stay where they are while notes come in; the first ones are shown together.
+    val listState = listHolder.listState
+    val shownEvents = listHolder.bind(source = events, context = userPubkey)
+    com.wisp.app.ui.util.JumpLogger(listState, "bookmark_set")
 
     var menuExpanded by remember { mutableStateOf(false) }
 
@@ -107,7 +119,14 @@ fun BookmarkSetScreen(
             )
         }
     ) { padding ->
-        if (bookmarkSet == null || events.isEmpty()) {
+        if (bookmarkSet != null && shownEvents.isEmpty() && events.isNotEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(32.dp))
+            }
+        } else if (bookmarkSet == null || shownEvents.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentAlignment = Alignment.Center
@@ -120,10 +139,12 @@ fun BookmarkSetScreen(
                 )
             }
         } else {
+            Box(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize().padding(padding)
             ) {
-                items(items = events, key = { it.id }) { event ->
+                items(items = shownEvents, key = { it.id }, contentType = { "post" }) { event ->
                     val profile = eventRepo.getProfileData(event.pubkey)
                     val likeCount = reactionVersion.let { eventRepo.getReactionCount(event.id) }
                     val userEmojis = reactionVersion.let {
@@ -138,20 +159,22 @@ fun BookmarkSetScreen(
                         onReply = { onReply(event) },
                         onProfileClick = { onProfileClick(event.pubkey) },
                         onNavigateToProfile = onProfileClick,
-                        onNoteClick = { onNoteClick(event) },
+                        onNoteClick = { listHolder.expectChangeOnReturn(); onNoteClick(event) },
                         onQuotedNoteClick = onQuotedNoteClick,
                         onReact = { emoji -> onReact(event, emoji) },
                         userReactionEmojis = userEmojis,
                         likeCount = likeCount,
                         eventRepo = eventRepo,
                         onFollowAuthor = { onToggleFollow(event.pubkey) },
-                        onBlockAuthor = { onBlockUser(event.pubkey) },
+                        onBlockAuthor = { listHolder.expectChange(); onBlockUser(event.pubkey) },
                         isOwnEvent = event.pubkey == userPubkey,
                         translationState = translationState,
                         onTranslate = { translationRepo?.translate(event) },
                         autoTranslate = autoTranslate
                     )
                 }
+            }
+            HeldRowsPill(listHolder, "New posts", Modifier.padding(padding))
             }
         }
     }
