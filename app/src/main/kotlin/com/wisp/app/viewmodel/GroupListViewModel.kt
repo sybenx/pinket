@@ -74,6 +74,9 @@ class GroupListViewModel(app: Application) : AndroidViewModel(app) {
     private val _adminErrors = MutableSharedFlow<AdminError>(extraBufferCapacity = 8)
     val adminErrors: SharedFlow<AdminError> = _adminErrors
 
+    /** Set by Navigation (FeedViewModel.listWriter): the only signer of your group list. */
+    var listWriter: ListWriter? = null
+
     val groups: StateFlow<List<GroupRoom>>
         get() = groupRepo?.joinedGroups ?: MutableStateFlow(emptyList())
 
@@ -338,7 +341,7 @@ class GroupListViewModel(app: Application) : AndroidViewModel(app) {
         repo.addGroup(normalizedUrl, groupId)
         applyCachedPreview(normalizedUrl, groupId)
         subscribeToGroup(normalizedUrl, groupId)
-        publishGroupList(signer)
+        writeGroupMembership(normalizedUrl, groupId, joined = true, signer = signer)
     }
 
     fun joinGroup(relayUrl: String, groupId: String, signer: NostrSigner?, inviteCode: String? = null) {
@@ -485,6 +488,7 @@ class GroupListViewModel(app: Application) : AndroidViewModel(app) {
         waitForRelayAuth(pool, relayUrl)
 
         val event = try {
+            // list-write-exception: every caller passes a group admin kind (Nip29 9000s or 9001), never a list.
             signer.signEvent(kind = kind, content = content, tags = tags)
         } catch (e: Exception) {
             _adminErrors.tryEmit(AdminError(relayUrl, label,
@@ -515,7 +519,7 @@ class GroupListViewModel(app: Application) : AndroidViewModel(app) {
         repo.addGroup(relayUrl, groupId)
         applyCachedPreview(relayUrl, groupId)
         subscribeToGroup(relayUrl, groupId)
-        publishGroupList(signer)
+        writeGroupMembership(relayUrl, groupId, joined = true, signer = signer)
         // Re-request all subscriptions after a short delay — private relays close the initial
         // REQs with "restricted: not a member" and only respond after the join is processed.
         accountScope.launch(Dispatchers.Default) {
@@ -553,7 +557,7 @@ class GroupListViewModel(app: Application) : AndroidViewModel(app) {
             isHidden = isHidden
         ))
         subscribeToGroup(relayUrl, groupId)
-        publishGroupList(signer)
+        writeGroupMembership(relayUrl, groupId, joined = true, signer = signer)
         val anyFlagSet = isPrivate || isClosed || isRestricted || isHidden
         signer?.let { s ->
             accountScope.launch(Dispatchers.Default) {
@@ -728,7 +732,7 @@ class GroupListViewModel(app: Application) : AndroidViewModel(app) {
         }
         groupRepo?.removeGroup(relayUrl, groupId)
         unsubscribeFromGroup(relayUrl, groupId)
-        publishGroupList(signer)
+        writeGroupMembership(relayUrl, groupId, joined = false, signer = signer)
     }
 
     /** Admin action: delete a group (kind 9008), remove locally, clean up relay, publish updated list. */
@@ -749,7 +753,7 @@ class GroupListViewModel(app: Application) : AndroidViewModel(app) {
         }
         groupRepo?.removeGroup(relayUrl, groupId)
         unsubscribeFromGroup(relayUrl, groupId)
-        publishGroupList(signer)
+        writeGroupMembership(relayUrl, groupId, joined = false, signer = signer)
     }
 
     /** Admin action: remove a user from the group (kind 9001). */
@@ -949,38 +953,40 @@ class GroupListViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Publish the user's current group list as a kind 10009 replaceable event.
-     * Builds entries from GroupRepository's joined groups.
+     * Your group list (10009) through the app's list writer: joining adds that group (and the relay's `r` tag only
+     * when the list has none for it), leaving removes that group only. Everything else in the list stays as it is.
+     * The group is added or removed here at once; a write that cannot go out now is kept and sent later, and a
+     * group you left is not added back meanwhile.
      */
-    private fun publishGroupList(signer: NostrSigner?) {
-        val s = signer ?: return
-        val repo = groupRepo ?: return
-        val pool = relayPool ?: return
-        val entries = repo.getJoinedGroupKeys().map { (relayUrl, groupId) ->
-            val room = repo.getRoom(relayUrl, groupId)
-            SimpleGroupEntry(groupId, relayUrl, room?.metadata?.name)
+    private fun writeGroupMembership(relayUrl: String, groupId: String, joined: Boolean, signer: NostrSigner?) {
+        if (signer == null) return
+        val w = listWriter ?: return
+        val relay = relayUrl.trim().trimEnd('/')
+        val edits = if (joined) {
+            val name = groupRepo?.getRoom(relay, groupId)?.metadata?.name?.takeIf { it.isNotBlank() }
+            listOf(
+                ListEdit(listOfNotNull("group", groupId, relay, name), ListEdit.Op.ADD),
+                ListEdit.add("r", relay)
+            )
+        } else {
+            listOf(ListEdit.remove("group", groupId, relay))
         }
-        val tags = Nip51.buildSimpleGroupsTags(entries)
-        accountScope.launch(Dispatchers.Default) {
-            try {
-                val event = s.signEvent(
-                    kind = Nip51.KIND_SIMPLE_GROUPS,
-                    content = "",
-                    tags = tags
-                )
-                val msg = ClientMessage.event(event)
-                pool.sendToWriteRelays(msg)
-                for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
-                    pool.sendToRelayOrEphemeral(url, msg)
-                }
-            } catch (_: Exception) { }
-        }
+        // You are in other groups here: your group list exists, so none found must not start one with this group.
+        val expected = groupListExpected(groupRepo?.getJoinedGroupKeys().orEmpty(), relay, groupId)
+        w.submitEdit(Nip51.KIND_SIMPLE_GROUPS, edits, expected = expected)
     }
 
     private fun subId(type: String, groupId: String) = "$SUB_PREFIX$type-$groupId"
 
     companion object {
         private const val SUB_PREFIX = "grp-"
+
+        /**
+         * Whether your group list is expected to exist when you join or leave [groupId] on [relay]: you are in other
+         * groups here ([joined]: relay to group id).
+         */
+        fun groupListExpected(joined: Collection<Pair<String, String>>, relay: String, groupId: String): Boolean =
+            joined.any { (r, g) -> !(g == groupId && ListWriter.norm(r) == ListWriter.norm(relay)) }
         /** How long to wait for NIP-42 AUTH to complete before sending a 9021. Covers the
          *  common case where the relay challenges AUTH on connect — without waiting, an
          *  unauthenticated 9021 gets silently downgraded to a "closed group" rejection even

@@ -162,6 +162,14 @@ class OwnListStoreTest {
         assertFalse(store(storage).isNewAccount())
     }
 
+    @Test fun aVersionARelayEchoedBeforeItWasRecordedCountsAsRecorded() {
+        val s = store()
+        val signed = ev(0, now, id('a'))
+        assertTrue("the relay echo gets there first", s.seen(signed))
+        assertTrue(s.recordSigned(signed))
+        assertNull("a relay has it: nothing to re-send", s.unconfirmed("0"))
+    }
+
     @Test fun signedEventIsUnconfirmedUntilARelayHasIt() {
         val s = store()
         val signed = ev(10003, now, id('a'))
@@ -244,6 +252,11 @@ class OwnListStoreTest {
     }
 
     @Test fun storedKindsAreTheListsAndTheRelayLists() {
-        assertEquals(setOf(3, 10000, 10001, 10003, 10002, 10050), OwnListStore.STORED_KINDS)
+        // Phase 1 kinds, plus the phase 2 kinds that move to ListWriter.
+        assertTrue(OwnListStore.STORED_KINDS.containsAll(setOf(3, 10000, 10001, 10003, 10002, 10050)))
+        assertEquals(
+            setOf(0, 3, 10000, 10001, 10002, 10003, 10006, 10007, 10009, 10012, 10030, 10050, 10063, 30000, 30002, 30003, 30015, 30030, 30078),
+            OwnListStore.STORED_KINDS
+        )
     }
 }

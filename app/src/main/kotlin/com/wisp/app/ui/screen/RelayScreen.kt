@@ -32,6 +32,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import android.widget.Toast
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -137,13 +138,16 @@ fun RelayScreen(
                         RelaySetType.SEARCH -> stringResource(R.string.broadcast_search_relays)
                         RelaySetType.BLOCKED -> stringResource(R.string.broadcast_blocked_relays)
                     }
-                    val successMsg = stringResource(R.string.error_relay_broadcast)
                     val failureMsg = stringResource(R.string.error_broadcast_failed)
+                    // Saved, or nothing to save (refusals and "will save later" come from the list writer itself).
+                    LaunchedEffect(viewModel) {
+                        viewModel.messages.collect { Toast.makeText(context, context.getString(it), Toast.LENGTH_SHORT).show() }
+                    }
                     Button(
                         onClick = {
-                            val ok = viewModel.publishRelayList(relayPool, signer = signer)
-                            val msg = if (ok) successMsg else failureMsg
-                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                            if (signer == null || !viewModel.publishRelayList()) {
+                                Toast.makeText(context, failureMsg, Toast.LENGTH_SHORT).show()
+                            }
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {

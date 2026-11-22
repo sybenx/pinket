@@ -82,7 +82,9 @@ class EventRouter(
     private val getIsTrendingFeed: () -> Boolean,
     private val onRelayFeedEventReceived: () -> Unit,
     /** The active account's own-list store (null before an account is loaded). */
-    private val getOwnListStore: () -> OwnListStore? = { null }
+    private val getOwnListStore: () -> OwnListStore? = { null },
+    /** A set was hidden or shown again here (a deletion request for it arrived): refresh what is shown. */
+    private val onHiddenSetsChanged: () -> Unit = {}
 ) {
     /**
      * IDs of the user's own recent events used to build the notif-replies-etag subscription.
@@ -125,20 +127,24 @@ class EventRouter(
     private fun feedOwnList(event: NostrEvent): Boolean? {
         val store = getOwnListStore() ?: return null
         // Only the list kinds that ListWriter writes or reads (others are not kept: the store is one prefs file).
-        if (event.kind !in OwnListStore.STORED_KINDS) return null
+        if (!OwnListStore.keeps(event)) return null
         if (OwnListStore.keyOrNull(event) == null) return null
         if (event.pubkey.lowercase() != store.pubkeyHex) return null
         return store.seen(event)
     }
 
     /**
-     * Load one of your own list versions into its repository (follows, mutes, bookmarks, pins). Called for a version
+     * Load one of your own list versions into its repository (follows, mutes, bookmarks, pins, people, bookmark,
+     * interest and emoji sets, the emoji list). Called for a version
      * the own-list store took as newest: from relays here, and from ListWriter after it signs.
      */
     suspend fun applyOwnList(event: NostrEvent) {
         val myPubkey = getUserPubkey() ?: return
         if (event.pubkey != myPubkey) return
+        if (OwnListStore.isAddressable(event.kind)) showAgainIfNewer(event)
         when (event.kind) {
+            // Your profile, as the list writer found or signed it (incoming profiles reach the cache the usual way).
+            0 -> eventRepo.addEvent(event)
             3 -> contactRepo.loadFromEvent(event)
             Nip51.KIND_MUTE_LIST -> {
                 val s = getSigner()
@@ -149,7 +155,97 @@ class EventRouter(
                 if (s != null) bookmarkRepo.loadFromEvent(event, s) else bookmarkRepo.loadFromEvent(event)
             }
             Nip51.KIND_PIN_LIST -> pinRepo.loadFromEvent(event)
+            Nip51.KIND_FOLLOW_SET -> listRepo.updateFromEvent(event, decryptOwn(event))
+            Nip51.KIND_BOOKMARK_SET -> bookmarkSetRepo.updateFromEvent(event, decryptOwn(event))
+            Nip51.KIND_INTEREST_SET -> interestRepo.updateFromEvent(event)
+            Nip30.KIND_EMOJI_SET, Nip30.KIND_USER_EMOJI_LIST -> customEmojiRepo.updateFromEvent(event)
+            else -> applyOwnRelayList(event)
         }
+    }
+
+    /**
+     * Your relay lists, relay sets, groups and media servers, from the version the own-list store took as newest,
+     * with your changes still waiting to be written laid over it (so a kept change, such as leaving a group, stays
+     * shown and a group you left is not added back).
+     */
+    private fun applyOwnRelayList(event: NostrEvent) {
+        // Only into the active account's settings (a list written for a key that is not active yet, during sign-up,
+        // is saved by the screen that wrote it).
+        val store = getOwnListStore() ?: return
+        if (store.pubkeyHex != event.pubkey.lowercase()) return
+        val shown = RelayListEdits.overlaid(event, store)
+        // What the editors' rows now come from: they diff against this version (RelayListEdits.inStep).
+        if (event.kind in RelayListEdits.EDITOR_KINDS) store.markProjected(OwnListStore.key(event.kind), event.id)
+        when (event.kind) {
+            10002 -> {
+                // The per-relay sign-in switch is kept on this device only: keep it for every relay still listed.
+                val auth = keyRepo.getRelays().associate { ListWriter.norm(it.url) to it.auth }
+                val relays = Nip65.parseRelayList(shown).map { r -> auth[ListWriter.norm(r.url)]?.let { r.copy(auth = it) } ?: r }
+                if (relays.isNotEmpty()) keyRepo.saveRelays(relays)
+            }
+            Nip51.KIND_DM_RELAYS -> {
+                val urls = Nip51.parseRelaySet(shown)
+                keyRepo.saveDmRelays(urls)
+                relayPool.updateDmRelays(urls)
+            }
+            Nip51.KIND_SEARCH_RELAYS -> keyRepo.saveSearchRelays(Nip51.parseRelaySet(shown))
+            Nip51.KIND_BLOCKED_RELAYS -> {
+                val urls = Nip51.parseRelaySet(shown)
+                keyRepo.saveBlockedRelays(urls)
+                relayPool.updateBlockedUrls(urls)
+            }
+            // Relay sets and favourites lay the pending changes over themselves (RelaySetRepository.setOverlay).
+            Nip51.KIND_FAVORITE_RELAYS -> relaySetRepo.updateFavoriteRelaysFromEvent(event)
+            Nip51.KIND_RELAY_SET -> relaySetRepo.updateRelaySetFromEvent(event)
+            Nip51.KIND_SIMPLE_GROUPS -> {
+                val repo = groupRepo ?: return
+                val existing = repo.getJoinedGroupKeys().toSet()
+                for (entry in Nip51.parseSimpleGroups(shown)) {
+                    if (Pair(entry.relayUrl, entry.groupId) !in existing) {
+                        repo.addGroup(entry.relayUrl, entry.groupId, localName = entry.name)
+                    }
+                }
+            }
+            Blossom.KIND_SERVER_LIST -> blossomRepo.updateFromEvent(shown)
+        }
+    }
+
+    /** The private part of your own set, or null (none, or it cannot be read). NIP-04 content stays readable. */
+    private suspend fun decryptOwn(event: NostrEvent): String? {
+        if (event.content.isBlank()) return null
+        val s = getSigner() ?: return null
+        return try {
+            if (event.content.contains("?iv=")) s.nip04Decrypt(event.content, s.pubkeyHex)
+            else s.nip44Decrypt(event.content, s.pubkeyHex)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * A deletion request for your set (written by another app, or by this app before sets were hidden instead):
+     * hide the set here unless a newer version is already known. Nothing is published.
+     */
+    private fun hideForDeletion(deletion: NostrEvent) {
+        val store = getOwnListStore() ?: return
+        var changed = false
+        for (coord in Nip09.getDeletedAddresses(deletion)) {
+            val parts = coord.split(":", limit = 3)
+            if (parts.size != 3 || !parts[1].equals(store.pubkeyHex, ignoreCase = true)) continue
+            val kind = parts[0].toIntOrNull() ?: continue
+            if (kind !in ListCrudManager.SET_KINDS) continue
+            // Kept with the request's date (also across sessions): a newer version shows the set again.
+            if (store.hideForDeletion(kind, parts[2], deletion.created_at)) changed = true
+        }
+        if (changed) onHiddenSetsChanged()
+    }
+
+    /** A version of a set hidden for a deletion request that is newer than that request: show the set again. */
+    private fun showAgainIfNewer(event: NostrEvent) {
+        val store = getOwnListStore() ?: return
+        if (store.showAgainIfNewer(event)) onHiddenSetsChanged()
     }
 
     suspend fun processRelayEvent(event: NostrEvent, relayUrl: String, subscriptionId: String) {
@@ -439,7 +535,8 @@ class EventRouter(
                     DiagnosticLogger.log("SELF_DATA", "kind=${event.kind} pubkey=${event.pubkey.take(8)} " +
                         "myPubkey=${myPubkey?.take(8)} isMine=$isMine sub=$subscriptionId relay=$relayUrl")
                 }
-                if (myPubkey != null && event.pubkey == myPubkey && isNewestSelfData(event)) {
+                // Your own relay list loads through applyOwnList once the own-list store took it.
+                if (ownList == null && myPubkey != null && event.pubkey == myPubkey && isNewestSelfData(event)) {
                     val relays = Nip65.parseRelayList(event)
                     if (relays.isNotEmpty()) {
                         keyRepo.saveRelays(relays)
@@ -453,19 +550,19 @@ class EventRouter(
             if (event.kind == Nip51.KIND_DM_RELAYS) {
                 relayListRepo.updateDmRelaysFromEvent(event)
                 val myPubkey = getUserPubkey()
-                if (myPubkey != null && event.pubkey == myPubkey && isNewestSelfData(event)) {
+                if (ownList == null && myPubkey != null && event.pubkey == myPubkey && isNewestSelfData(event)) {
                     val urls = Nip51.parseRelaySet(event)
                     keyRepo.saveDmRelays(urls)
                     relayPool.updateDmRelays(urls)
                 }
             }
-            if (event.kind == Nip51.KIND_SEARCH_RELAYS) {
+            if (event.kind == Nip51.KIND_SEARCH_RELAYS && ownList == null) {
                 val myPubkey = getUserPubkey()
                 if (myPubkey != null && event.pubkey == myPubkey && isNewestSelfData(event)) {
                     keyRepo.saveSearchRelays(Nip51.parseRelaySet(event))
                 }
             }
-            if (event.kind == Nip51.KIND_BLOCKED_RELAYS) {
+            if (event.kind == Nip51.KIND_BLOCKED_RELAYS && ownList == null) {
                 val myPubkey = getUserPubkey()
                 if (myPubkey != null && event.pubkey == myPubkey && isNewestSelfData(event)) {
                     val urls = Nip51.parseRelaySet(event)
@@ -486,11 +583,12 @@ class EventRouter(
                 val myPubkey = getUserPubkey()
                 if (myPubkey != null && event.pubkey == myPubkey) pinRepo.loadFromEventIfNewer(event)
             }
-            if (event.kind == Blossom.KIND_SERVER_LIST) {
+            if (event.kind == Blossom.KIND_SERVER_LIST && ownList == null) {
                 val myPubkey = getUserPubkey()
                 if (myPubkey != null && event.pubkey == myPubkey && isNewestSelfData(event)) blossomRepo.updateFromEvent(event)
             }
-            if (event.kind == Nip51.KIND_FOLLOW_SET) {
+            // Your own sets and emoji list load through applyOwnList once the own-list store took them.
+            if (event.kind == Nip51.KIND_FOLLOW_SET && ownList == null) {
                 val myPubkey = getUserPubkey()
                 val s = getSigner()
                 val decrypted = if (myPubkey != null && s != null && event.pubkey == myPubkey && event.content.isNotBlank()) {
@@ -498,7 +596,7 @@ class EventRouter(
                 } else null
                 listRepo.updateFromEvent(event, decrypted)
             }
-            if (event.kind == Nip51.KIND_INTEREST_SET) {
+            if (event.kind == Nip51.KIND_INTEREST_SET && ownList == null) {
                 val myPubkey = getUserPubkey()
                 if (myPubkey != null && event.pubkey == myPubkey) {
                     interestRepo.updateFromEvent(event)
@@ -510,18 +608,12 @@ class EventRouter(
                     // Run through EventRepository so deletion coords/ids are persisted
                     // in DeletedEventsRepository. Safe to call repeatedly.
                     eventRepo.addEvent(event)
-                    // Relays often keep re-serving deleted addressable events; sweep
-                    // matching entries out of the repos that hold them in memory.
-                    for (coord in Nip09.getDeletedAddresses(event)) {
-                        val parts = coord.split(":", limit = 3)
-                        if (parts.size != 3 || parts[1] != myPubkey) continue
-                        val kind = parts[0].toIntOrNull() ?: continue
-                        val dTag = parts[2]
-                        if (kind == Nip51.KIND_INTEREST_SET) interestRepo.removeSet(dTag)
-                    }
+                    // Your sets are never dropped for a deletion request: they are hidden here instead (shown
+                    // again by a newer version, or by making a set with that name).
+                    hideForDeletion(event)
                 }
             }
-            if (event.kind == Nip51.KIND_BOOKMARK_SET) {
+            if (event.kind == Nip51.KIND_BOOKMARK_SET && ownList == null) {
                 val myPubkey = getUserPubkey()
                 val s = getSigner()
                 val decrypted = if (myPubkey != null && s != null && event.pubkey == myPubkey && event.content.isNotBlank()) {
@@ -529,16 +621,16 @@ class EventRouter(
                 } else null
                 bookmarkSetRepo.updateFromEvent(event, decrypted)
             }
-            if (event.kind == Nip51.KIND_RELAY_SET) {
+            if (event.kind == Nip51.KIND_RELAY_SET && ownList == null) {
                 relaySetRepo.updateRelaySetFromEvent(event)
             }
-            if (event.kind == Nip51.KIND_FAVORITE_RELAYS) {
+            if (event.kind == Nip51.KIND_FAVORITE_RELAYS && ownList == null) {
                 val myPubkey = getUserPubkey()
                 if (myPubkey != null && event.pubkey == myPubkey) {
                     relaySetRepo.updateFavoriteRelaysFromEvent(event)
                 }
             }
-            if (event.kind == Nip51.KIND_SIMPLE_GROUPS) {
+            if (event.kind == Nip51.KIND_SIMPLE_GROUPS && ownList == null) {
                 val myPubkey = getUserPubkey()
                 if (myPubkey != null && event.pubkey == myPubkey && isNewestSelfData(event)) {
                     val groups = Nip51.parseSimpleGroups(event)
@@ -554,11 +646,11 @@ class EventRouter(
                     }
                 }
             }
-            if (event.kind == Nip30.KIND_USER_EMOJI_LIST) {
+            if (event.kind == Nip30.KIND_USER_EMOJI_LIST && ownList == null) {
                 val myPubkey = getUserPubkey()
                 if (myPubkey != null && event.pubkey == myPubkey) customEmojiRepo.updateFromEvent(event)
             }
-            if (event.kind == Nip30.KIND_EMOJI_SET) customEmojiRepo.updateFromEvent(event)
+            if (event.kind == Nip30.KIND_EMOJI_SET && ownList == null) customEmojiRepo.updateFromEvent(event)
 
             // Only add to feed for feed-related subscriptions;
             // other subs (user profile, bookmarks, threads) just cache
@@ -647,7 +739,13 @@ class EventRouter(
 
     companion object {
         /** Own list kinds whose repositories load through [applyOwnList] once the own-list store takes a version. */
-        val PROJECTED_KINDS = setOf(3, Nip51.KIND_MUTE_LIST, Nip51.KIND_BOOKMARK_LIST, Nip51.KIND_PIN_LIST)
+        val PROJECTED_KINDS = setOf(
+            3, Nip51.KIND_MUTE_LIST, Nip51.KIND_BOOKMARK_LIST, Nip51.KIND_PIN_LIST,
+            Nip51.KIND_FOLLOW_SET, Nip51.KIND_BOOKMARK_SET, Nip51.KIND_INTEREST_SET,
+            Nip30.KIND_EMOJI_SET, Nip30.KIND_USER_EMOJI_LIST,
+            10002, Nip51.KIND_DM_RELAYS, Nip51.KIND_SEARCH_RELAYS, Nip51.KIND_BLOCKED_RELAYS,
+            Nip51.KIND_FAVORITE_RELAYS, Nip51.KIND_RELAY_SET, Nip51.KIND_SIMPLE_GROUPS, Blossom.KIND_SERVER_LIST
+        )
 
         private val SELF_DATA_KINDS = intArrayOf(
             0, 3, 5, 10002, 10050, 10007, 10006,

@@ -814,6 +814,7 @@ class ComposeViewModel(app: Application, private val savedStateHandle: SavedStat
         // Scheduled post — sign with future created_at and send to scheduler relays
         if (_scheduleEnabled.value && _scheduleTimestamp.value != null) {
             val scheduledAt = _scheduleTimestamp.value!!
+            // list-write-exception: eventKind is a note, comment, picture, video or poll kind chosen above, never a list.
             val event = signer.signEvent(kind = eventKind, content = finalContent, tags = tags, createdAt = scheduledAt)
             val msg = ClientMessage.event(event)
             var sentCount = 0
@@ -894,6 +895,7 @@ class ComposeViewModel(app: Application, private val savedStateHandle: SavedStat
         }
 
         val publisher = requireNotNull(eventRepo?.notePublisher) { "Publication storage unavailable" }
+        // list-write-exception: eventKind is a note, comment, picture, video or poll kind chosen above, never a list.
         val event = signer.signEvent(kind = eventKind, content = finalContent, tags = tags)
         // Editing or leaving while signing must stop this attempt before it is saved or sent.
         kotlinx.coroutines.currentCoroutineContext().ensureActive()

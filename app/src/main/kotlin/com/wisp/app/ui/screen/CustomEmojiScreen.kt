@@ -73,9 +73,14 @@ fun CustomEmojiScreen(
     customEmojiRepo: CustomEmojiRepository,
     onBack: () -> Unit,
     onCreateSet: (String, List<CustomEmoji>) -> Unit,
-    onUpdateSet: (String, String, List<CustomEmoji>) -> Unit,
+    /** The set as the dialog opened it, then the title and emojis it closed with (only the differences are written). */
+    onUpdateSet: (EmojiSet, String, List<CustomEmoji>) -> Unit,
+    /** Hide the set on this device (nothing is published). */
     onDeleteSet: (String) -> Unit,
-    onPublishEmojiList: (List<CustomEmoji>, List<String>) -> Unit,
+    /** Add an image emoji to your emoji list (a shortcode already there gets the new image). */
+    onAddDirectEmoji: (CustomEmoji) -> Unit,
+    /** Take these image emojis out of your emoji list (only emojis listed directly, never a whole set). */
+    onRemoveDirectEmojis: (List<CustomEmoji>) -> Unit,
     onAddSet: (String, String) -> Unit,
     onRemoveSet: (String, String) -> Unit,
     onUploadEmoji: (ContentResolver, Uri, (String) -> Unit) -> Unit = { _, _, _ -> }
@@ -176,7 +181,7 @@ fun CustomEmojiScreen(
                     modifier = Modifier.padding(bottom = 4.dp)
                 )
                 Text(
-                    text = "Image emojis from your emoji list (kind 10030)",
+                    text = "Image emojis from your emoji list",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -190,11 +195,7 @@ fun CustomEmojiScreen(
                     directEmojis.forEach { emoji ->
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable {
-                                val updated = directEmojis.toMutableList()
-                                updated.remove(emoji)
-                                onPublishEmojiList(updated, userEmojiList?.setReferences ?: emptyList())
-                            }
+                            modifier = Modifier.clickable { onRemoveDirectEmojis(listOf(emoji)) }
                         ) {
                             AsyncImage(
                                 model = emoji.url,
@@ -257,6 +258,8 @@ fun CustomEmojiScreen(
                         resolvedEmojis.filter { it.key !in removedShortcodes }
                     } else resolvedEmojis
 
+                    // Only emojis listed directly can be taken out here; emojis that come from a set stay.
+                    val directShortcodes = userEmojiList?.emojis.orEmpty().map { it.shortcode }.toSet()
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -275,7 +278,7 @@ fun CustomEmojiScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                if (managingEmojis) {
+                                if (managingEmojis && shortcode in directShortcodes) {
                                     Surface(
                                         shape = RoundedCornerShape(50),
                                         color = MaterialTheme.colorScheme.error,
@@ -313,11 +316,9 @@ fun CustomEmojiScreen(
                             }
                             Button(
                                 onClick = {
-                                    // Rebuild: surviving emojis become direct entries,
-                                    // set references are dropped so removed set emojis don't reappear
-                                    val remaining = resolvedEmojis.filter { it.key !in removedShortcodes }
-                                    val newDirectEmojis = remaining.map { (sc, url) -> CustomEmoji(sc, url) }
-                                    onPublishEmojiList(newDirectEmojis, emptyList())
+                                    // Only the ticked emojis listed directly go; sets you use stay in the list.
+                                    val removed = userEmojiList?.emojis.orEmpty().filter { it.shortcode in removedShortcodes }
+                                    if (removed.isNotEmpty()) onRemoveDirectEmojis(removed)
                                     managingEmojis = false
                                     removedShortcodes = emptySet()
                                 },
@@ -439,9 +440,7 @@ fun CustomEmojiScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        val directEmojis = (userEmojiList?.emojis ?: emptyList()).toMutableList()
-                        directEmojis.add(CustomEmoji(shortcode.trim(), url.trim()))
-                        onPublishEmojiList(directEmojis, userEmojiList?.setReferences ?: emptyList())
+                        onAddDirectEmoji(CustomEmoji(shortcode.trim(), url.trim()))
                         showAddDirectEmojiDialog = false
                     },
                     enabled = shortcode.isNotBlank() && url.isNotBlank()
@@ -464,10 +463,11 @@ fun CustomEmojiScreen(
     }
 
     if (editingSet != null) {
+        val opened = editingSet!!
         EditEmojiSetDialog(
-            set = editingSet!!,
-            onConfirm = { dTag, title, emojis ->
-                onUpdateSet(dTag, title, emojis)
+            set = opened,
+            onConfirm = { _, title, emojis ->
+                onUpdateSet(opened, title, emojis)
                 editingSet = null
             },
             onDismiss = { editingSet = null },
@@ -524,7 +524,7 @@ private fun EmojiSetCard(
                 IconButton(onClick = onDelete) {
                     Icon(
                         Icons.Default.Delete,
-                        contentDescription = "Delete",
+                        contentDescription = androidx.compose.ui.res.stringResource(com.wisp.app.R.string.list_hide),
                         tint = MaterialTheme.colorScheme.error
                     )
                 }

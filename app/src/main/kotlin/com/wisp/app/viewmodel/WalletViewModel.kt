@@ -81,6 +81,8 @@ class WalletViewModel(
     val eventRepo: EventRepository,
     val relayPool: RelayPool,
     val keyRepo: KeyRepository,
+    /** The only place that signs the NWC backup (FeedViewModel.listWriter). */
+    private val listWriter: ListWriter? = null,
 ) : ViewModel() {
     private val accountScope = AccountSessionScope(viewModelScope)
     private var accountSuspended = false
@@ -334,19 +336,25 @@ class WalletViewModel(
         _nwcRestoreState.value = NwcRestoreState.Idle
     }
 
+    /**
+     * Back the URI up through the list writer: it starts from your newest backup, writes nothing when that already
+     * holds this URI, and keeps its tags. Quiet (no messages): a background backup.
+     */
     private suspend fun publishNwcBackup(uri: String) {
+        val w = listWriter ?: return
         val signer = buildSigner() ?: return
         val trimmed = uri.trim()
         if (trimmed.isEmpty()) return
         try {
             relayPool.ensureWriteRelaysConnected()
-            val event = withContext(Dispatchers.Default) {
-                Nip78.createNwcBackupEvent(signer, trimmed)
+            val result = w.setAppData(Nip78.NWC_BACKUP_D_TAG, Nip78.NWC_BACKUP_FIRST_TAGS, quiet = true) { old ->
+                Nip78.nwcBackupContent(signer, old, trimmed)
             }
-            val sent = relayPool.sendToWriteRelays(ClientMessage.event(event))
-            Log.d("NwcBackup", "publish: sent to $sent relays")
+            Log.d("NwcBackup", "backup: $result")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Log.d("NwcBackup", "publish failed (non-fatal): ${e.message}")
+            Log.d("NwcBackup", "backup failed (non-fatal): ${e.message}")
         }
     }
 
@@ -385,7 +393,8 @@ class WalletViewModel(
 
         startStatusCollection(nwcRepo)
         nwcRepo.connect()
-        startConnectionMonitor(nwcRepo, verifySetup = verifySetup)
+        // A silent reconnect (account switch back, app resume) does not back the URI up again.
+        startConnectionMonitor(nwcRepo, verifySetup = verifySetup, backup = !silent)
     }
 
     fun showNwcExport() {
@@ -404,7 +413,7 @@ class WalletViewModel(
         }
     }
 
-    private fun startConnectionMonitor(provider: WalletProvider, verifySetup: Boolean = false) {
+    private fun startConnectionMonitor(provider: WalletProvider, verifySetup: Boolean = false, backup: Boolean = true) {
         connectJob?.cancel()
         val timeoutMs = 20_000L
         connectJob = accountScope.launch {
@@ -423,6 +432,7 @@ class WalletViewModel(
             // re-emits connected=true and only needs the balance refetch,
             // not another verification round-trip.
             var verified = false
+            var backedUp = false
             provider.isConnected.collect { connected ->
                 if (connected) {
                     // Opening the subscription says nothing about whether
@@ -462,10 +472,12 @@ class WalletViewModel(
                     if (provider === nwcRepo) {
                         launch { nwcRepo.fetchNodeInfo() }
                         // Best-effort cross-device backup of the URI per
-                        // NWC_BACKUP_PARITY.md. Publish each connect so a
-                        // reconnect / wallet swap replaces the prior backup.
+                        // NWC_BACKUP_PARITY.md, once per connect (a wallet swap
+                        // connects again and replaces the prior backup; the
+                        // writer writes nothing when the backup already holds it).
                         val uri = nwcRepo.getConnectionString()
-                        if (!uri.isNullOrBlank()) {
+                        if (backup && !backedUp && !uri.isNullOrBlank()) {
+                            backedUp = true
                             launch { publishNwcBackup(uri) }
                         }
                     }

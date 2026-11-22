@@ -1,5 +1,9 @@
 package com.wisp.app.nostr
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+
 /**
  * Changing entries of one of your lists (the house rule: marble-content-fixtures/list-writes.md; a port of Marble's
  * ListWrite). A list is replaced whole, so a write from the wrong start wipes it everywhere: start from your newest
@@ -12,8 +16,11 @@ object ListWrite {
     /** A version dated more than this many seconds after now is never the start of a write (Marble's Policy AHEAD). */
     const val AHEAD = 600L
 
-    /** Tags that a list holds at most once, keyed by name alone in [slot] so a [Change.set] replaces them in place. */
-    val SINGLE: Set<String> = setOf("title")
+    /**
+     * Tags that a list holds at most once (a set's name, picture and description), keyed by name alone in [slot] so a
+     * [Change.set] replaces them in place.
+     */
+    val SINGLE: Set<String> = setOf("title", "image", "description")
 
     /**
      * One change: add an entry, remove every copy of an entry, or [set] (replace the tag with the same [slot] in place,
@@ -30,12 +37,12 @@ object ListWrite {
     /**
      * An entry's identity: its name and value. A relay's address in one spelling (`relay`, `r`); `p` and `e` trimmed and
      * lowercase; a muted `word` lowercase; a `group` (NIP-29) is its id on its relay, `"<id>|<relay>"`, because ids
-     * repeat across relays.
+     * repeat across relays; a media `server` (10063) its address in one spelling, like a relay.
      */
     fun key(t: List<String>): Pair<String, String>? {
         if (t.size < 2) return null
         val v = when (t[0]) {
-            "relay", "r" -> relay(t[1])
+            "relay", "r", "server" -> relay(t[1])
             "p", "e" -> t[1].trim().lowercase()
             "word" -> t[1].lowercase()
             "group" -> t[1] + "|" + relay(t.getOrNull(2) ?: "")
@@ -122,6 +129,9 @@ object ListWrite {
 
     private fun applyAll(start: List<List<String>>, changes: List<Change>): List<List<String>> =
         changes.fold(start) { tags, c -> applyOne(tags, c) }
+
+    /** One change applied to [tags] the way [planMany] does it (entries matched by [slot]). */
+    fun apply(tags: List<List<String>>, change: Change): List<List<String>> = applyOne(tags, change)
 
     private fun applyOne(tags: List<List<String>>, c: Change): List<List<String>> {
         val add = c.add
@@ -251,6 +261,129 @@ object ListWrite {
         val pub = part(oldPublic, nextPublic) ?: return "other tags changed"
         val priv = part(oldPrivate, nextPrivate) ?: return "other tags changed"
         if (!pub && !priv) return "changes nothing"
+        return null
+    }
+
+    // ---------------------------------------------------------------- reorder (10063)
+
+    /**
+     * [tags] with the entries named in [order] (by [key]) put in that order, each into the places those entries
+     * already held; every other tag stays where it is. A named entry that is not in [tags] is skipped. Null when a
+     * named entry is there more than once or is the `d` tag (which copy goes where cannot be told).
+     */
+    fun reorder(tags: List<List<String>>, order: List<List<String>>): List<List<String>>? {
+        val wanted = order.mapNotNull(::key).distinct()
+        if (wanted.any { it.first == "d" }) return null
+        val wantedSet = wanted.toSet()
+        val positions = tags.indices.filter { key(tags[it]) in wantedSet }
+        val present = positions.map { key(tags[it])!! }
+        if (present.size != present.toSet().size) return null
+        val byKey = positions.associate { key(tags[it])!! to tags[it] }
+        val sequence = wanted.filter { it in byKey }
+        val out = tags.toMutableList()
+        positions.forEachIndexed { i, pos -> out[pos] = byKey.getValue(sequence[i]) }
+        return out
+    }
+
+    /** A new order for your newest version of a list ([reorder]); check the result with [guardReorder]. */
+    fun planReorder(found: List<NostrEvent>, me: String, kind: Int, d: String?, order: List<List<String>>, expected: Boolean, now: Long, maxAhead: Long? = AHEAD): Plan {
+        if (addressable(kind) && d == null) return Plan.Refuse("no d")
+        val old = newest(found, me, kind, d) ?: return if (expected) Plan.Refuse("no list found") else Plan.Nothing
+        if (maxAhead != null && old.created_at > now + maxAhead) return Plan.Refuse("dated ahead")
+        val tags = reorder(old.tags, order) ?: return Plan.Refuse("an entry is there twice")
+        if (tags == old.tags) return Plan.Nothing
+        return Plan.Write(kind, tags, old.content, maxOf(now, old.created_at + 1), old)
+    }
+
+    // ---------------------------------------------------------------- profile (kind 0)
+
+    private val profileJson = Json { ignoreUnknownKeys = true }
+
+    /** A profile's fields: its content as a JSON object (blank content is an empty one), or null when it is not one. */
+    fun profileFields(content: String): JsonObject? {
+        if (content.isBlank()) return JsonObject(emptyMap())
+        return try {
+            profileJson.parseToJsonElement(content) as? JsonObject
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Your profile with only [fields] changed: a value sets that field (in its place, or at the end when new), null
+     * takes the field out. Every other field, unknown ones too, and every tag stay as they were. [expected]: you have
+     * a profile (this device saw one): then none found is a refusal. Check the result with [guardProfile].
+     */
+    fun planProfile(found: List<NostrEvent>, me: String, fields: Map<String, JsonElement?>, expected: Boolean, now: Long, maxAhead: Long? = AHEAD): Plan {
+        if (fields.isEmpty()) return Plan.Refuse("no change")
+        val old = newest(found, me, 0)
+        if (old == null) {
+            if (expected) return Plan.Refuse("no list found")
+            val first = LinkedHashMap<String, JsonElement>()
+            for ((k, v) in fields) if (v != null) first[k] = v
+            if (first.isEmpty()) return Plan.Nothing
+            return Plan.Write(0, emptyList(), JsonObject(first).toString(), now, null)
+        }
+        if (maxAhead != null && old.created_at > now + maxAhead) return Plan.Refuse("dated ahead")
+        val start = profileFields(old.content) ?: return Plan.Refuse("profile unreadable")
+        val next = LinkedHashMap<String, JsonElement>(start)
+        for ((k, v) in fields) if (v == null) next.remove(k) else next[k] = v
+        if (next == start) return Plan.Nothing
+        return Plan.Write(0, old.tags, JsonObject(next).toString(), maxOf(now, old.created_at + 1), old)
+    }
+
+    /**
+     * The last check for a profile: newer, tags unchanged, every field in [fields] as asked (null: gone), every
+     * other field the same value and in the same order. [old] null: a first profile, no tags, only [fields].
+     */
+    fun guardProfile(old: Version?, next: Version, fields: Map<String, JsonElement?>, now: Long? = null): String? {
+        if (next.kind != 0 || (old != null && old.kind != 0)) return "a different list"
+        if (old != null) {
+            versionGuard(old, next, now, sameContent = false)?.let { return it }
+            if (old.tags != next.tags) return "other tags changed"
+        } else if (next.tags.isNotEmpty()) return "other tags changed"
+        val o = if (old != null) profileFields(old.content) ?: return "profile unreadable" else JsonObject(emptyMap())
+        val n = profileFields(next.content) ?: return "the profile changed"
+        if (o == n) return "changes nothing"
+        for (k in o.keys + n.keys + fields.keys) {
+            if (fields.containsKey(k)) {
+                val want = fields[k]
+                if (want == null) { if (n.containsKey(k)) return "changes more than asked" }
+                else if (n[k] != want) return "changes more than asked"
+            } else if (o[k] != n[k]) return "changes more than asked"
+        }
+        val keptOld = o.keys.filter { it in n && !fields.containsKey(it) }
+        val keptNew = n.keys.filter { it in o && !fields.containsKey(it) }
+        if (keptOld != keptNew) return "other fields moved"
+        return null
+    }
+
+    // ---------------------------------------------------------------- content only (30078 app data)
+
+    /**
+     * A new content for your newest version of [kind] (a set: [d]), every tag kept. [content] null: nothing to write
+     * (the caller found the newest already holds it). With no version found and nothing [expected], a first version:
+     * its d, then [firstTags]. Check the result with [guardContent].
+     */
+    fun planContent(old: NostrEvent?, kind: Int, d: String?, content: String?, firstTags: List<List<String>>, expected: Boolean, now: Long, maxAhead: Long? = AHEAD): Plan {
+        if (addressable(kind) && d == null) return Plan.Refuse("no d")
+        if (content == null) return Plan.Nothing
+        if (old == null) {
+            if (expected) return Plan.Refuse("no list found")
+            val tags = listOfNotNull(d?.let { listOf("d", it) }) + firstTags.filterNot { it.firstOrNull() == "d" }
+            return Plan.Write(kind, tags, content, now, null)
+        }
+        if (old.kind != kind || (d != null && dTag(old) != d)) return Plan.Refuse("a different list")
+        if (maxAhead != null && old.created_at > now + maxAhead) return Plan.Refuse("dated ahead")
+        if (old.content == content) return Plan.Nothing
+        return Plan.Write(kind, old.tags, content, maxOf(now, old.created_at + 1), old)
+    }
+
+    /** The last check for a content-only write: same kind and d, newer, every tag the same, the content new. */
+    fun guardContent(old: Version, next: Version, now: Long? = null): String? {
+        versionGuard(old, next, now, sameContent = false)?.let { return it }
+        if (old.tags != next.tags) return "other tags changed"
+        if (old.content == next.content) return "changes nothing"
         return null
     }
 }

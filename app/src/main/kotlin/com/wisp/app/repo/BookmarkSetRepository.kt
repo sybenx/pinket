@@ -11,6 +11,11 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
+/**
+ * Bookmark sets (kind 30003). Your own load from the version the own-list store took as newest (and from ListWriter
+ * after it signs); writes go through ListWriter only. What is shown ([ownSets], [allListedEventIds], [getSet]) has
+ * ListWriter's pending changes laid over it and leaves out the sets hidden here.
+ */
 class BookmarkSetRepository(private val context: Context, pubkeyHex: String? = null) {
     private var prefs: SharedPreferences =
         context.getSharedPreferences(prefsName(pubkeyHex), Context.MODE_PRIVATE)
@@ -26,15 +31,51 @@ class BookmarkSetRepository(private val context: Context, pubkeyHex: String? = n
 
     private var ownerPubkey: String? = null
 
+    /** ListWriter's pending changes to your bookmark sets, by d. */
+    private var pending: Map<String, List<PendingChange>> = emptyMap()
+    /** Sets hidden on this device ("30003:d"). */
+    private var hidden: Set<String> = emptySet()
+    /** Sets being created (d to title), shown as empty sets until they load. */
+    private var creating: Map<String, String> = emptyMap()
+
     init {
         loadFromPrefs()
     }
 
+    @Synchronized
     fun setOwner(pubkey: String) {
         ownerPubkey = pubkey
         refreshOwnSets()
     }
 
+    /** ListWriter's pending changes (any kind; only bookmark sets are used) and the sets hidden here ("kind:d"). */
+    @Synchronized
+    fun setOverlay(pendingChanges: List<PendingChange>, hiddenKeys: Set<String>) {
+        val p = SetOverlay.byD(pendingChanges, Nip51.KIND_BOOKMARK_SET)
+        val h = hiddenKeys.filterTo(HashSet()) { it.startsWith("${Nip51.KIND_BOOKMARK_SET}:") }
+        val c = SetOverlay.creating(pendingChanges, Nip51.KIND_BOOKMARK_SET)
+        if (p == pending && h == hidden && c == creating) return
+        pending = p
+        hidden = h
+        creating = c
+        refreshOwnSets()
+    }
+
+    private fun shown(set: BookmarkSet): BookmarkSet {
+        if (set.pubkey != ownerPubkey) return set
+        val p = pending[set.dTag] ?: return set
+        return set.copy(
+            name = SetOverlay.title(set.name, p),
+            eventIds = SetOverlay.values(set.eventIds, "e", p),
+            coordinates = SetOverlay.values(set.coordinates, "a", p),
+            hashtags = SetOverlay.values(set.hashtags, "t", p)
+        )
+    }
+
+    private fun isHidden(set: BookmarkSet): Boolean =
+        set.pubkey == ownerPubkey && OwnListStore.key(Nip51.KIND_BOOKMARK_SET, set.dTag) in hidden
+
+    @Synchronized
     fun updateFromEvent(event: NostrEvent, decryptedContent: String? = null) {
         val set = Nip51.parseBookmarkSet(event, decryptedContent) ?: return
         val key = "${event.pubkey}:${set.dTag}"
@@ -44,20 +85,22 @@ class BookmarkSetRepository(private val context: Context, pubkeyHex: String? = n
         refreshOwnSets()
     }
 
+    /** The set as shown (pending changes included), hidden or not. */
+    @Synchronized
     fun getSet(pubkey: String, dTag: String): BookmarkSet? {
-        return bookmarkSets["$pubkey:$dTag"]
+        return bookmarkSets["$pubkey:$dTag"]?.let { shown(it) }
     }
 
-    /** Remove a set from local state (after sending deletion event to relays). */
-    fun removeSet(pubkey: String, dTag: String) {
-        bookmarkSets.remove("$pubkey:$dTag")
-        refreshOwnSets()
-    }
+    /** The set as last loaded, without pending changes (for deciding where a new entry goes). */
+    @Synchronized
+    fun getLoadedSet(pubkey: String, dTag: String): BookmarkSet? = bookmarkSets["$pubkey:$dTag"]
 
+    @Synchronized
     fun getAllSetsForUser(pubkey: String): List<BookmarkSet> {
         return bookmarkSets.values.filter { it.pubkey == pubkey }
     }
 
+    @Synchronized
     fun clear() {
         bookmarkSets.clear()
         _ownSets.value = emptyList()
@@ -65,6 +108,7 @@ class BookmarkSetRepository(private val context: Context, pubkeyHex: String? = n
         ownerPubkey = null
     }
 
+    @Synchronized
     fun reload(pubkeyHex: String?) {
         clear()
         prefs = context.getSharedPreferences(prefsName(pubkeyHex), Context.MODE_PRIVATE)
@@ -74,8 +118,11 @@ class BookmarkSetRepository(private val context: Context, pubkeyHex: String? = n
     private fun refreshOwnSets() {
         val owner = ownerPubkey ?: return
         val own = bookmarkSets.values.filter { it.pubkey == owner }.sortedBy { it.name }
-        _ownSets.value = own
-        _allListedEventIds.value = own.flatMapTo(mutableSetOf()) { it.eventIds }
+        val making = creating.filterKeys { bookmarkSets["$owner:$it"] == null }.map { (d, t) -> BookmarkSet(owner, d, t, emptySet()) }
+        val shownSets = (own.filterNot { isHidden(it) }.map { shown(it) } + making).sortedBy { it.name }
+        _ownSets.value = shownSets
+        _allListedEventIds.value = shownSets.flatMapTo(mutableSetOf()) { it.eventIds }
+        // What was loaded, never the pending changes.
         saveToPrefs(own)
     }
 

@@ -71,6 +71,7 @@ class PowManager(
                     )
                 }
 
+                // list-write-exception: proof of work mines notes and replies only (kind 1, a comment or a compose kind).
                 val event = signer.signEvent(
                     kind = kind,
                     content = content,

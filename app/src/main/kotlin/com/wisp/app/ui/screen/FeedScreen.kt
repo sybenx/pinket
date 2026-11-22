@@ -2080,7 +2080,7 @@ private fun HashtagPickerDialog(
                                 ) {
                                     Icon(
                                         Icons.Default.Delete,
-                                        contentDescription = stringResource(R.string.btn_delete),
+                                        contentDescription = stringResource(R.string.list_hide),
                                         modifier = Modifier.size(16.dp)
                                     )
                                 }
@@ -2251,13 +2251,13 @@ private fun HashtagPickerDialog(
         AlertDialog(
             onDismissRequest = { confirmDeleteDTag = null },
             containerColor = MaterialTheme.colorScheme.surface,
-            title = { Text(stringResource(R.string.delete_set)) },
-            text = { Text(stringResource(R.string.error_delete_set_hashtags, setName)) },
+            title = { Text(stringResource(R.string.list_hide)) },
+            text = { Text(stringResource(R.string.list_hide_confirm, setName)) },
             confirmButton = {
                 TextButton(onClick = {
                     onDeleteSet(dTag)
                     confirmDeleteDTag = null
-                }) { Text(stringResource(R.string.btn_delete)) }
+                }) { Text(stringResource(R.string.list_hide)) }
             },
             dismissButton = {
                 TextButton(onClick = { confirmDeleteDTag = null }) { Text(stringResource(R.string.btn_cancel)) }

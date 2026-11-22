@@ -1019,4 +1019,11 @@
     <string name="list_change_blocked">Not saved. It would have changed more than you asked.</string>
     <string name="list_not_sent">Not connected. Nothing was changed.</string>
     <string name="list_will_save">Will save when you are back online.</string>
+    <string name="list_name_taken">You already have a list with that name.</string>
+    <string name="list_read_only">Made in another app. Change it there.</string>
+    <string name="profile_not_found">Couldn\'t find your current profile. Try again in a moment.</string>
+    <string name="list_hide">Hide</string>
+    <string name="list_no_changes">No changes to save.</string>
+    <string name="list_reloaded">Your newest saved list was loaded here. Check it, then save again.</string>
+    <string name="list_hide_confirm">Hide \"%1$s\" here? Other apps still show it. Making a list with the same name brings it back.</string>
 </resources>

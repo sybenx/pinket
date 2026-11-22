@@ -35,7 +35,8 @@ fun ownListLegacyWatermarks(context: Context, pubkeyHex: String): Map<String, Lo
         "3" to read("wisp_contacts", "follows_updated"),
         "10000" to read("wisp_mutes", "mute_updated"),
         "10003" to read("wisp_bookmarks", "bookmark_updated"),
-        "10001" to read("wisp_pins", "pin_updated")
+        "10001" to read("wisp_pins", "pin_updated"),
+        "10030" to read("wisp_custom_emoji", "user_emoji_updated")
     )
 }
 

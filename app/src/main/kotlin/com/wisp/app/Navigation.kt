@@ -219,6 +219,7 @@ fun WispNavHost(
                     feedViewModel.eventRepo,
                     feedViewModel.relayPool,
                     feedViewModel.keyRepo,
+                    feedViewModel.listWriter,
                 ) as T
             }
         }
@@ -234,6 +235,12 @@ fun WispNavHost(
 
     relayViewModel.relayPool = feedViewModel.relayPool
     relayViewModel.ownListStore = { feedViewModel.ownListStore }
+    relayViewModel.listWriter = { feedViewModel.listWriter }
+    blossomServersViewModel.ownListStore = { feedViewModel.ownListStore }
+    blossomServersViewModel.listWriter = { feedViewModel.listWriter }
+    relayViewModel.reproject = { feedViewModel.reprojectOwnList(it) }
+    blossomServersViewModel.reproject = { feedViewModel.reprojectOwnList(it) }
+    groupListViewModel.listWriter = feedViewModel.listWriter
     onboardingViewModel.listWriter = feedViewModel.listWriter
 
     // Signer for the active account: LOCAL → LocalSigner; READ_ONLY (or signed out) → null.
@@ -594,7 +601,11 @@ fun WispNavHost(
             eventId = addToListEventId!!,
             bookmarkSets = ownSets,
             isBookmarked = addToListEventId!! in bookmarkedIds,
-            onToggleBookmark = { eventId -> feedViewModel.setBookmarked(eventId, wanted = eventId !in bookmarkedIds) },
+            onToggleBookmark = { eventId ->
+                // The reader's own change: the Bookmarks screen shows it at once instead of holding the row.
+                feedViewModel.bookmarksListHolder.expectChange()
+                feedViewModel.setBookmarked(eventId, wanted = eventId !in bookmarkedIds)
+            },
             onAddToSet = { dTag, eventId -> feedViewModel.addNoteToBookmarkSet(dTag, eventId) },
             onRemoveFromSet = { dTag, eventId -> feedViewModel.removeNoteFromBookmarkSet(dTag, eventId) },
             onCreateSet = { name -> feedViewModel.createBookmarkSet(name) },
@@ -1198,6 +1209,7 @@ fun WispNavHost(
         }
 
         composable(Routes.PROFILE_EDIT) {
+            profileViewModel.listWriter = feedViewModel.listWriter
             ProfileEditScreen(
                 viewModel = profileViewModel,
                 relayPool = feedViewModel.relayPool,
@@ -2312,10 +2324,8 @@ fun WispNavHost(
                 interestSetsLoaded = interestSetsFetched,
                 onFollowHashtag = { dTag -> feedViewModel.followHashtag(tag, dTag) },
                 onUnfollowHashtag = { dTag -> feedViewModel.unfollowHashtag(tag, dTag) },
-                onCreateDefaultSet = {
-                    feedViewModel.createInterestSet("Interests")
-                    feedViewModel.followHashtag(tag, "interests")
-                },
+                // No interest set shown: one write into "Interests", started only when you have none anywhere.
+                onCreateDefaultSet = { feedViewModel.followHashtagsInDefaultSet(listOf(tag)) },
                 nip05Repo = feedViewModel.nip05Repo,
                 translationRepo = feedViewModel.translationRepo,
                 autoTranslate = feedViewModel.interfacePrefs.isAutoTranslate(),
@@ -2468,12 +2478,10 @@ fun WispNavHost(
                 noteActions = setFeedNoteActions,
                 interestSets = interestSets,
                 interestSetsLoaded = interestSetsFetched,
-                onFollowHashtag = { dTag -> tags.forEach { feedViewModel.followHashtag(it, dTag) } },
-                onUnfollowHashtag = { dTag -> tags.forEach { feedViewModel.unfollowHashtag(it, dTag) } },
-                onCreateDefaultSet = {
-                    feedViewModel.createInterestSet("Interests")
-                    tags.forEach { feedViewModel.followHashtag(it, "interests") }
-                },
+                // Follow all / unfollow all: one write for the whole set of tags.
+                onFollowHashtag = { dTag -> feedViewModel.setHashtagsFollowed(tags, dTag, wanted = true) },
+                onUnfollowHashtag = { dTag -> feedViewModel.setHashtagsFollowed(tags, dTag, wanted = false) },
+                onCreateDefaultSet = { feedViewModel.followHashtagsInDefaultSet(tags) },
                 nip05Repo = feedViewModel.nip05Repo,
                 translationRepo = feedViewModel.translationRepo,
                 autoTranslate = feedViewModel.interfacePrefs.isAutoTranslate(),
@@ -2876,9 +2884,10 @@ fun WispNavHost(
                 customEmojiRepo = feedViewModel.customEmojiRepo,
                 onBack = { navController.popBackStack() },
                 onCreateSet = { name, emojis -> feedViewModel.createEmojiSet(name, emojis) },
-                onUpdateSet = { dTag, title, emojis -> feedViewModel.updateEmojiSet(dTag, title, emojis) },
+                onUpdateSet = { opened, title, emojis -> feedViewModel.updateEmojiSet(opened, title, emojis) },
                 onDeleteSet = { dTag -> feedViewModel.deleteEmojiSet(dTag) },
-                onPublishEmojiList = { emojis, refs -> feedViewModel.publishUserEmojiList(emojis, refs) },
+                onAddDirectEmoji = { emoji -> feedViewModel.addDirectEmoji(emoji) },
+                onRemoveDirectEmojis = { emojis -> feedViewModel.removeDirectEmojis(emojis) },
                 onAddSet = { pubkey, dTag -> feedViewModel.addSetToEmojiList(pubkey, dTag) },
                 onRemoveSet = { pubkey, dTag -> feedViewModel.removeSetFromEmojiList(pubkey, dTag) },
                 onUploadEmoji = { contentResolver, uri, onResult ->
@@ -3084,11 +3093,7 @@ fun WispNavHost(
                 },
                 onReact = { event, emoji -> feedViewModel.toggleReaction(event, emoji) },
                 onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
-                onRemoveBookmark = { eventId ->
-                    // The reader's own removal: show it at once instead of holding the row.
-                    feedViewModel.bookmarksListHolder.expectChange()
-                    feedViewModel.setBookmarked(eventId, wanted = false)
-                },
+                onAddToList = { eventId -> addToListEventId = eventId },
                 onToggleFollow = { pubkey -> feedViewModel.toggleFollow(pubkey) },
                 onBlockUser = { pubkey -> feedViewModel.blockUser(pubkey) },
                 translationRepo = feedViewModel.translationRepo,
@@ -3254,9 +3259,7 @@ fun WispNavHost(
                 onContinue = {
                     val selected = topicOnboardingViewModel.selectedTopics.value
                     if (selected.isNotEmpty()) {
-                        // Publish a single kind 30015 with all selected tags. Per-tag
-                        // followHashtag calls race on the same d-tag, so use the bulk
-                        // API to produce one atomic event with a nice title.
+                        // One write with all selected tags into "Interests" (started only when you have none).
                         feedViewModel.followHashtags(selected, dTag = "interests", setTitle = "Interests")
                     }
                     navController.navigate(Routes.ONBOARDING_FIRST_POST)
@@ -3450,6 +3453,7 @@ fun WispNavHost(
                                 }
                             )
                         } else {
+                            // list-write-exception: replyKind is a reply, kind 1 or a comment (1111), never a list.
                             val event = signer.signEvent(kind = replyKind, content = content, tags = tags)
                             val msg = com.wisp.app.nostr.ClientMessage.event(event)
                             if (feedViewModel.outboxRouter != null) {

@@ -97,7 +97,7 @@ fun BookmarkSetScreen(
                             onDismissRequest = { menuExpanded = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Delete List") },
+                                text = { Text(androidx.compose.ui.res.stringResource(com.wisp.app.R.string.list_hide)) },
                                 onClick = {
                                     menuExpanded = false
                                     onDeleteList()

@@ -679,15 +679,27 @@ class ListWriterTest {
     @Test
     fun aFirstListNeedsTwoWriteRelaysSayingThereIsNone() = runBlocking {
         val h = harness(withRelayList = false)
-        assertTrue(h.store.seen(h.sign(10002, listOf(listOf("r", w1)), at = h.now - 4000)))
-        // One listed write relay answered "none": not enough to start bookmarks from nothing.
+        assertTrue(h.store.seen(h.sign(10002, listOf(listOf("r", w1), listOf("r", w2)), at = h.now - 4000)))
+        h.relays.online = mutableSetOf(ListWriter.norm(w1), ListWriter.norm(idx))
+        // One of your two write relays answered "none": not enough to start bookmarks from nothing.
         val r = h.writer.set(10003, listOf("e", hex(1)), wanted = true)
         assertEquals(ListResult.Reason.NOT_FOUND, (r as ListResult.Refused).reason)
         assertTrue(h.relays.published.isEmpty())
         assertTrue(h.store.pending("10003").isEmpty())
-        // A follow list may still be started that way, because the user confirms it.
+    }
+
+    @Test
+    fun withOneListedWriteRelayItsAnswerIsEnoughForAFirstList() = runBlocking {
+        val h = harness(withRelayList = false)
+        assertTrue(h.store.seen(h.sign(10002, listOf(listOf("r", w1)), at = h.now - 4000)))
+        // Your only write relay answered "none": a first list the user asked for may start.
+        val r = h.writer.set(10003, listOf("e", hex(1)), wanted = true) as ListResult.Sent
+        assertEquals(listOf(listOf("e", hex(1))), r.event.tags)
+        // A follow list still asks the user first.
         val f = h.writer.set(3, listOf("p", hex(1)), wanted = true)
         assertEquals(ListResult.Reason.NEEDS_CONFIRM, (f as ListResult.Refused).reason)
+        // A list the app would start by itself still needs two relays saying there is none.
+        assertEquals(ListResult.Pending, h.writer.createIfMissing(10050, listOf(listOf("relay", "wss://dm.example"))))
     }
 
     @Test

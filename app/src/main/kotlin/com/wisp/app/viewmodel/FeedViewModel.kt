@@ -202,7 +202,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     val relaySetRepo = RelaySetRepository(app, pubkeyHex)
     val pinRepo = PinRepository(app, pubkeyHex)
     val blossomRepo = BlossomRepository(app, pubkeyHex)
-    val interestRepo = InterestRepository(app, pubkeyHex, deletedEventsRepo)
+    val interestRepo = InterestRepository(app, pubkeyHex)
     val relayInfoRepo = RelayInfoRepository()
     val relayScoreBoard = RelayScoreBoard(app, relayListRepo, contactRepo, pubkeyHex)
     val outboxRouter = OutboxRouter(relayPool, relayListRepo, relayHintStore, relayScoreBoard)
@@ -356,8 +356,15 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         getRelayFeedSubId = { feedSub.relayFeedSubId },
         getIsTrendingFeed = { feedSub.feedType.value == FeedType.TRENDING },
         onRelayFeedEventReceived = { feedSub.onRelayFeedEventReceived() },
-        getOwnListStore = { ownListStore }
+        getOwnListStore = { ownListStore },
+        onHiddenSetsChanged = {
+            listWriter.refreshOverlay()
+            setsOverlayTick.value++
+        }
     )
+
+    /** Bumped when the sets hidden here change outside ListWriter (start-up move, a deletion request arrived). */
+    private val setsOverlayTick = MutableStateFlow(0)
 
     /**
      * The active account's own-list store: the newest version of each own list this device has seen, pending list
@@ -404,6 +411,28 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
                 pinRepo.setPending(overlay.under(pinPrefix))
             }
         }
+        // Sets and the emoji list: their pending changes (with the entries, for titles and emoji images) and the
+        // sets hidden here, laid over what the repositories show. Read from the account's store, which is there
+        // even before the signer is.
+        viewModelScope.launch(Dispatchers.Default) {
+            combine(listWriter.overlay, listWriter.hiddenSets, listWriter.creating, setsOverlayTick) { _, _, _, _ -> Unit }.collect {
+                val store = ownListStore
+                val hidden = store?.hiddenSets().orEmpty()
+                // Sets being created show at once, as empty sets, until the written version loads.
+                val creating = listWriter.creating.value
+                val pending = store?.allPending().orEmpty().filter { it.kind in ListCrudManager.OVERLAY_KINDS } +
+                    creating.filter { it.kind in ListCrudManager.OVERLAY_KINDS }
+                listRepo.setOverlay(pending, hidden)
+                bookmarkSetRepo.setOverlay(pending, hidden)
+                interestRepo.setOverlay(pending, hidden)
+                customEmojiRepo.setOverlay(pending, hidden)
+                // Favourite relays and relay sets: pending taps and relay sets hidden here.
+                relaySetRepo.setOverlay(
+                    (store?.allPending().orEmpty() + creating).filter { it.kind == Nip51.KIND_FAVORITE_RELAYS || it.kind == Nip51.KIND_RELAY_SET },
+                    hidden
+                )
+            }
+        }
     }
 
     val socialActions: SocialActionManager = SocialActionManager(
@@ -427,9 +456,34 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     val listCrud: ListCrudManager = ListCrudManager(
         relayPool, subManager, eventRepo, listRepo, interestRepo, bookmarkSetRepo, customEmojiRepo,
         metadataFetcher, outboxRouter, accountScope, processingDispatcher,
-        getSigner = { signer },
+        listWriter = listWriter,
+        getOwnListStore = { ownListStore },
         getUserPubkey = { getUserPubkey() }
     )
+
+    init {
+        // Once per account: sets this device already shows are recorded as made here, old deletions become hides.
+        listCrud.migrateSets()
+        setsOverlayTick.value++
+        resyncEditorLists()
+    }
+
+    /**
+     * Load your newest stored version of [kind] into the app's settings again (relays, media servers): the settings
+     * screens found their rows were loaded from something else.
+     */
+    suspend fun reprojectOwnList(kind: Int) {
+        val e = ownListStore?.latest(kind) ?: return
+        kotlinx.coroutines.withContext(Dispatchers.Default) { eventRouter.applyOwnList(e) }
+    }
+
+    /** Settings lists (relays, media servers) that were not loaded from your newest stored version: load them now. */
+    private fun resyncEditorLists() {
+        val store = ownListStore ?: return
+        val stale = RelayListEdits.EDITOR_KINDS.filterNot { RelayListEdits.inStep(store, it) }
+        if (stale.isEmpty()) return
+        viewModelScope.launch { for (k in stale) reprojectOwnList(k) }
+    }
 
     val startup: StartupCoordinator = StartupCoordinator(
         relayPool, outboxRouter, subManager, eventRepo, eventPersistence, contactRepo, muteRepo, notifRepo,
@@ -587,6 +641,9 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         startup.reloadForNewAccount()
         // After the line above: it re-points the graph database to the new account.
         spamVotes.reload()
+        listCrud.migrateSets()
+        setsOverlayTick.value++
+        resyncEditorLists()
         groupRepo.reload(getUserPubkey())
         val pk = getUserPubkey()
         relayPool.rekeyAuthPrefs(
@@ -811,7 +868,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // -- List CRUD delegates --
+    // -- List CRUD delegates (all through ListWriter; "delete" hides a set here, nothing is published) --
     fun createList(name: String, isPrivate: Boolean = false) = listCrud.createList(name, isPrivate)
     fun addToList(dTag: String, pubkey: String) = listCrud.addToList(dTag, pubkey)
     fun removeFromList(dTag: String, pubkey: String) = listCrud.removeFromList(dTag, pubkey)
@@ -842,16 +899,25 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun createEmojiSet(name: String, emojis: List<com.wisp.app.nostr.CustomEmoji>) = listCrud.createEmojiSet(name, emojis)
-    fun updateEmojiSet(dTag: String, title: String, emojis: List<com.wisp.app.nostr.CustomEmoji>) = listCrud.updateEmojiSet(dTag, title, emojis)
+    /** Write what the emoji set dialog changed ([opened] is the set as the dialog opened it). */
+    fun updateEmojiSet(opened: com.wisp.app.nostr.EmojiSet, title: String, emojis: List<com.wisp.app.nostr.CustomEmoji>) =
+        listCrud.updateEmojiSet(opened, title, emojis)
     fun deleteEmojiSet(dTag: String) = listCrud.deleteEmojiSet(dTag)
-    fun publishUserEmojiList(emojis: List<com.wisp.app.nostr.CustomEmoji>, setRefs: List<String>) = listCrud.publishUserEmojiList(emojis, setRefs)
+    fun addDirectEmoji(emoji: com.wisp.app.nostr.CustomEmoji) = listCrud.addDirectEmoji(emoji)
+    fun removeDirectEmojis(emojis: List<com.wisp.app.nostr.CustomEmoji>) = listCrud.removeDirectEmojis(emojis)
     fun addSetToEmojiList(pubkey: String, dTag: String) = listCrud.addSetToEmojiList(pubkey, dTag)
     fun removeSetFromEmojiList(pubkey: String, dTag: String) = listCrud.removeSetFromEmojiList(pubkey, dTag)
 
     // -- Interest set CRUD delegates --
     fun followHashtag(tag: String, dTag: String) = listCrud.followHashtag(tag, dTag)
+    /** Follow or unfollow several hashtags in the set [dTag] the user picked, in one write. */
+    fun setHashtagsFollowed(tags: Collection<String>, dTag: String, wanted: Boolean) = listCrud.setHashtags(tags, dTag, wanted)
+    /** Follow hashtags in a set the app picks (onboarding, the default set); it is started only when none exists. */
     fun followHashtags(tags: Set<String>, dTag: String, setTitle: String? = null) =
         listCrud.followHashtags(tags, dTag, setTitle)
+    /** Follow hashtags when you have no interest set shown: into "Interests", made only when you have none anywhere. */
+    fun followHashtagsInDefaultSet(tags: Collection<String>) =
+        listCrud.followHashtags(tags.toSet(), ListCrudManager.DEFAULT_INTEREST_D, ListCrudManager.DEFAULT_INTEREST_TITLE)
     fun unfollowHashtag(tag: String, dTag: String) = listCrud.unfollowHashtag(tag, dTag)
     fun createInterestSet(name: String) = listCrud.createInterestSet(name)
     fun renameInterestSet(dTag: String, newName: String) = listCrud.renameInterestSet(dTag, newName)
@@ -914,56 +980,54 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     // -- Relay set delegates --
     fun setSelectedRelaySet(relaySet: RelaySet) = feedSub.setSelectedRelaySet(relaySet)
 
-    fun toggleFavoriteRelay(url: String) {
-        val isFav = relaySetRepo.isFavorite(url)
-        val updated = if (isFav) relaySetRepo.removeFavorite(url) else relaySetRepo.addFavorite(url)
-        publishFavoriteRelays(updated)
+    /** Favourite or unfavourite a relay (the state wanted is the opposite of what the star showed). */
+    fun toggleFavoriteRelay(url: String) = setFavoriteRelay(url, !relaySetRepo.isFavorite(url))
+
+    /** Make [url] a favourite relay or not: one entry of your favourites list, shown at once. */
+    fun setFavoriteRelay(url: String, wanted: Boolean, onResult: (ListResult) -> Unit = {}) =
+        listWriter.submitEdit(
+            Nip51.KIND_FAVORITE_RELAYS, relayEdits(url, wanted),
+            // The app shows favourites of yours: none found must not start a new list from this one star.
+            expected = relaySetRepo.hasSavedFavorites(),
+            onResult = onResult
+        )
+
+    /** Adding writes `relay`. Removing takes out both spellings: other apps keep these as `r`, and the app shows both. */
+    private fun relayEdits(url: String, wanted: Boolean): List<ListEdit> {
+        val u = url.trim().trimEnd('/')
+        return if (wanted) listOf(ListEdit.add("relay", u)) else listOf(ListEdit.remove("relay", u), ListEdit.remove("r", u))
     }
 
-    fun addRelayToSet(url: String, dTag: String) {
-        val updated = relaySetRepo.addRelayToSet(url, dTag) ?: return
-        publishRelaySet(updated)
+    /** Add a relay to your relay set [dTag] (the user picked that set by name). */
+    fun addRelayToSet(url: String, dTag: String) = setRelayInSet(url, dTag, wanted = true)
+
+    fun removeRelayFromSet(url: String, dTag: String) = setRelayInSet(url, dTag, wanted = false)
+
+    private fun setRelayInSet(url: String, dTag: String, wanted: Boolean) {
+        listWriter.submitEdit(Nip51.KIND_RELAY_SET, relayEdits(url, wanted), d = dTag, expected = true, explicit = true)
     }
 
-    fun removeRelayFromSet(url: String, dTag: String) {
-        val updated = relaySetRepo.removeRelayFromSet(url, dTag) ?: return
-        publishRelaySet(updated)
-    }
-
+    /**
+     * Make a relay set named [name] (its d is [RelaySetRepository.slug] of it) and put [relays] in it. A set with
+     * that d that is hidden here comes back instead; any other one is refused (the writer shows why).
+     */
     fun createRelaySet(name: String, relays: Set<String> = emptySet()) {
-        val set = relaySetRepo.createRelaySet(name, relays) ?: return
-        publishRelaySet(set)
-    }
-
-    fun removeRelaySet(dTag: String) {
-        relaySetRepo.removeRelaySet(dTag)
-    }
-
-    private fun publishFavoriteRelays(urls: List<String>) {
-        val s = signer ?: return
+        val title = name.trim()
+        val d = RelaySetRepository.slug(title)
+        if (title.isEmpty() || d.isEmpty()) return
+        val urls = relays.map { it.trim().trimEnd('/') }.filter { RelayConfig.isValidUrl(it) }
         accountScope.launch {
-            val tags = Nip51.buildRelaySetTags(urls)
-            val event = s.signEvent(
-                kind = Nip51.KIND_FAVORITE_RELAYS,
-                content = "",
-                tags = tags
-            )
-            relayPool.sendToWriteRelays(ClientMessage.event(event))
+            when (listWriter.createSet(Nip51.KIND_RELAY_SET, d, title)) {
+                is ListResult.Sent, ListResult.Unchanged, ListResult.Pending -> if (urls.isNotEmpty()) {
+                    listWriter.edit(Nip51.KIND_RELAY_SET, urls.map { ListEdit.add("relay", it) }, d = d, expected = true, explicit = true)
+                }
+                else -> Unit // the writer already showed why
+            }
         }
     }
 
-    private fun publishRelaySet(relaySet: RelaySet) {
-        val s = signer ?: return
-        accountScope.launch {
-            val tags = Nip51.buildRelaySetNamedTags(relaySet.dTag, relaySet.relays, relaySet.name)
-            val event = s.signEvent(
-                kind = Nip51.KIND_RELAY_SET,
-                content = "",
-                tags = tags
-            )
-            relayPool.sendToWriteRelays(ClientMessage.event(event))
-        }
-    }
+    /** Hide the relay set here (nothing is published, never a deletion request). */
+    fun removeRelaySet(dTag: String) = listWriter.hideSet(Nip51.KIND_RELAY_SET, dTag)
 
     /**
      * Fetch DM relays (kind 10050) for a pubkey if not already cached.

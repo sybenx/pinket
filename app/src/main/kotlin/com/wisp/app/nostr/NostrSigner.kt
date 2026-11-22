@@ -24,6 +24,7 @@ class LocalSigner(
     override val pubkeyHex: String = pubkey.toHex()
 
     override suspend fun signEvent(kind: Int, content: String, tags: List<List<String>>, createdAt: Long): NostrEvent {
+        // list-write-exception: this is the signer itself; each caller's kind is checked at that caller's signEvent call.
         return NostrEvent.create(
             privkey = privkey,
             pubkey = pubkey,

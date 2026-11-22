@@ -33,8 +33,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
 
 data class SuggestionSection(
     val profiles: List<ProfileData> = emptyList(),
@@ -187,30 +185,9 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
 
             _phase.value = OnboardingPhase.BROADCASTING
 
-            val relayTags = Nip65.buildRelayTags(relays)
-            val relayListEvent = s.signEvent(kind = 10002, content = "", tags = relayTags)
-            // List writes use the relay list from the own-list store: give it this one at once.
-            try { openOwnListStore(getApplication(), s.pubkeyHex).seen(relayListEvent) } catch (_: Exception) {}
-            val relayListMsg = ClientMessage.event(relayListEvent)
-            relayPool.sendToWriteRelays(relayListMsg)
-            for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
-                relayPool.sendToRelayOrEphemeral(url, relayListMsg)
-            }
+            writeFirstRelayList(relayPool, s, relays)
 
-            val content = buildJsonObject {
-                if (_name.value.isNotBlank()) put("name", JsonPrimitive(_name.value))
-                if (_about.value.isNotBlank()) put("about", JsonPrimitive(_about.value))
-                if (_picture.value.isNotBlank()) put("picture", JsonPrimitive(_picture.value))
-            }.toString()
-
-            if (content != "{}") {
-                val event = s.signEvent(kind = 0, content = content)
-                val profileMsg = ClientMessage.event(event)
-                relayPool.sendToWriteRelays(profileMsg)
-                for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
-                    relayPool.sendToRelayOrEphemeral(url, profileMsg)
-                }
-            }
+            writeFirstProfile(s)
 
             _publishing.value = false
             true
@@ -218,6 +195,82 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
             _error.value = "Failed: ${e.message}"
             _publishing.value = false
             false
+        }
+    }
+
+    /** The profile fields filled in here (blank ones left out). */
+    private fun firstProfileFields(): Map<String, String> = buildMap {
+        if (_name.value.isNotBlank()) put("name", _name.value)
+        if (_about.value.isNotBlank()) put("about", _about.value)
+        if (_picture.value.isNotBlank()) put("picture", _picture.value)
+    }
+
+    /**
+     * Your profile from onboarding, through the list writer and in the background (the step never waits for it):
+     * written only when you have no profile anywhere. An existing key that lands here keeps the profile it has.
+     */
+    private fun writeFirstProfile(signer: NostrSigner) {
+        val w = listWriter ?: return
+        val fields = firstProfileFields()
+        if (fields.isEmpty()) return
+        val account = openListAccount(getApplication(), signer)
+        viewModelScope.launch {
+            // The relays were only just set up: when none could be reached yet, try again a little later (a short
+            // message only when the last try does not go through).
+            for (attempt in 0 until 3) {
+                if (attempt > 0) kotlinx.coroutines.delay(5_000)
+                val result = try {
+                    w.setProfileText(fields, onlyIfMissing = true, account = account, quiet = attempt < 2)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("Onboarding", "profile failed", e)
+                    return@launch
+                }
+                Log.d("Onboarding", "profile: $result")
+                if (!(result is ListResult.Refused && result.reason == ListResult.Reason.NOT_SENT)) break
+            }
+        }
+    }
+
+    /**
+     * Your relay list from onboarding, through the list writer and in the background (the step never waits for it):
+     * written only as a first list. A key made on this device writes it at once; an existing key that lands here
+     * gets it only when your write relays show you have none. When you already have one, nothing is written and the
+     * app uses yours instead of the ones found here.
+     */
+    private fun writeFirstRelayList(relayPool: RelayPool, signer: NostrSigner, relays: List<RelayConfig>) {
+        val w = listWriter ?: return
+        val account = openListAccount(getApplication(), signer)
+        viewModelScope.launch {
+            var result: ListResult = ListResult.Pending
+            // The relays were only just set up: when none could be reached yet, try again a little later.
+            for (attempt in 0 until 3) {
+                if (attempt > 0) kotlinx.coroutines.delay(5_000)
+                result = try {
+                    w.createIfMissing(
+                        10002,
+                        Nip65.buildRelayTags(relays),
+                        extraRelays = relays.map { it.url },
+                        account = account
+                    )
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("Onboarding", "relay list failed", e)
+                    return@launch
+                }
+                Log.d("Onboarding", "relay list: $result")
+                // Pending with a signed version kept: it is re-sent with the next list write, nothing more to do.
+                if (result != ListResult.Pending || account.store.latest(10002) != null) break
+            }
+            if (result != ListResult.Unchanged) return@launch
+            val mine = account.store.latest(10002) ?: return@launch
+            val auth = relays.associate { ListWriter.norm(it.url) to it.auth }
+            val yours = Nip65.parseRelayList(mine).map { r -> auth[ListWriter.norm(r.url)]?.let { r.copy(auth = it) } ?: r }
+            if (yours.isEmpty() || keyRepo.getPubkeyHex()?.lowercase() != signer.pubkeyHex.lowercase()) return@launch
+            keyRepo.saveRelays(yours)
+            relayPool.updateRelays(yours)
         }
     }
 

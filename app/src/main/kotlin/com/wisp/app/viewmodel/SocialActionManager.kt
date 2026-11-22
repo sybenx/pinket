@@ -65,8 +65,26 @@ class SocialActionManager(
     /** The only allowed signer of follows (3), mutes (10000) and pins (10001): pass the wanted state. */
     private val listWriter: ListWriter? = null
 ) {
-    private companion object {
-        const val KIND_FOLLOWS = 3
+    companion object {
+        private const val KIND_FOLLOWS = 3
+
+        /**
+         * Addressable kinds that are posts, not lists or sets, and may be taken back with a deletion request: long-form
+         * articles and their drafts (30023, 30024), live activities (30311), listings (30402, 30403), calendar events
+         * (31922, 31923), drafts (31234) and videos (34235, 34236).
+         */
+        val DELETABLE_ADDRESSABLE: Set<Int> = setOf(30023, 30024, 30311, 30402, 30403, 31922, 31923, 31234, 34235, 34236)
+
+        /**
+         * Whether [deleteEvent] may send a deletion request for an event of [kind]. Never for your profile, follows
+         * or any replaceable list (0, 3, 10000-19999), nor for any set (30000-39999) other than the posts in
+         * [DELETABLE_ADDRESSABLE]: lists are changed through ListWriter and sets are hidden here.
+         */
+        fun mayDelete(kind: Int): Boolean = when {
+            kind == 0 || kind == 3 || kind in 10000..19999 -> false
+            kind in 30000..39999 -> kind in DELETABLE_ADDRESSABLE
+            else -> true
+        }
     }
 
     private val _zapInProgress = MutableStateFlow<Set<String>>(emptySet())
@@ -361,11 +379,13 @@ class SocialActionManager(
     }
 
     fun deleteEvent(eventId: String, kind: Int) {
+        // Lists and sets are never deleted with a deletion request (they are changed through ListWriter or hidden).
+        if (!mayDelete(kind)) return
         val s = getSigner() ?: return
         scope.launch {
             try {
-                val tags = Nip09.buildDeletionTags(eventId, kind)
-                val deletionEvent = s.signEvent(kind = 5, content = "", tags = tags)
+                // list-write-exception: a post's own delete; mayDelete above refuses every list and set kind.
+                val deletionEvent = s.signEvent(kind = 5, content = "", tags = Nip09.buildDeletionTags(eventId, kind))
                 relayPool.sendToWriteRelays(ClientMessage.event(deletionEvent))
                 deletedEventsRepo.markDeleted(eventId)
                 eventRepo.removeEvent(eventId)

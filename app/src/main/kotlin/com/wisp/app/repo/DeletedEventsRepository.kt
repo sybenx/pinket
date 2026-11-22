@@ -31,6 +31,9 @@ class DeletedEventsRepository(private val context: Context, pubkeyHex: String? =
 
     fun isAddressDeleted(coord: String): Boolean = deletedAddresses.contains(coord)
 
+    /** Every address marked deleted ("kind:pubkey:dTag"). */
+    fun deletedAddresses(): Set<String> = deletedAddresses.toSet()
+
     fun isAddressDeleted(kind: Int, pubkey: String, dTag: String): Boolean =
         deletedAddresses.contains(addressCoord(kind, pubkey, dTag))
 

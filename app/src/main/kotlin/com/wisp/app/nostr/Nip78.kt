@@ -18,15 +18,25 @@ object Nip78 {
 
     const val NWC_BACKUP_D_TAG = "nwc-wallet-backup"
 
-    /** Build + sign a kind-30078 event carrying the encrypted NWC URI. */
-    suspend fun createNwcBackupEvent(signer: NostrSigner, uri: String): NostrEvent {
-        val encrypted = signer.nip44Encrypt(uri.trim(), signer.pubkeyHex)
-        val tags = listOf(
-            listOf("d", NWC_BACKUP_D_TAG),
-            listOf("client", "Pinket"),
-            listOf("encryption", "nip44")
-        )
-        return signer.signEvent(kind = KIND, content = encrypted, tags = tags)
+    /** The tags after `d` of a first backup (an existing backup keeps its own tags, see ListWriter.setAppData). */
+    val NWC_BACKUP_FIRST_TAGS: List<List<String>> = listOf(
+        listOf("client", "Pinket"),
+        listOf("encryption", "nip44")
+    )
+
+    /**
+     * The content of your NWC backup holding [uri] (NIP-44 to yourself), or null when there is nothing to write:
+     * [old] (your newest backup) already holds that URI, it is not yours, or [uri] is blank. Signed only by
+     * ListWriter.setAppData, which keeps every tag of [old].
+     */
+    suspend fun nwcBackupContent(signer: NostrSigner, old: NostrEvent?, uri: String): String? {
+        val trimmed = uri.trim()
+        if (trimmed.isEmpty()) return null
+        if (old != null) {
+            if (!old.pubkey.equals(signer.pubkeyHex, ignoreCase = true)) return null
+            if (decryptNwcBackup(signer, old) == trimmed) return null
+        }
+        return signer.nip44Encrypt(trimmed, signer.pubkeyHex)
     }
 
     /**

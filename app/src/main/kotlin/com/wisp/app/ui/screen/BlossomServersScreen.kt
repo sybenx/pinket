@@ -119,7 +119,7 @@ fun BlossomServersScreen(
             Spacer(Modifier.height(8.dp))
 
             Button(
-                onClick = { viewModel.publishServerList(relayPool, signer = signer) },
+                onClick = { viewModel.publishServerList(signer = signer) },
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(if (published) stringResource(R.string.blossom_broadcast_sent) else stringResource(R.string.blossom_broadcast))

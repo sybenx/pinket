@@ -98,8 +98,8 @@ fun ListsHubScreen(
         val target = deleteConfirmation!!
         AlertDialog(
             onDismissRequest = { deleteConfirmation = null },
-            title = { Text(stringResource(R.string.btn_delete_list)) },
-            text = { Text("Are you sure you want to delete \"${target.name}\"? A deletion request will be sent to relays, but it cannot be guaranteed.") },
+            title = { Text(stringResource(R.string.list_hide)) },
+            text = { Text(stringResource(R.string.list_hide_confirm, target.name)) },
             confirmButton = {
                 TextButton(onClick = {
                     when (target) {
@@ -108,7 +108,7 @@ fun ListsHubScreen(
                     }
                     deleteConfirmation = null
                 }) {
-                    Text(stringResource(R.string.btn_delete), color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.list_hide), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
@@ -350,7 +350,7 @@ private fun FollowSetRow(
                 }
             )
             DropdownMenuItem(
-                text = { Text(stringResource(R.string.btn_delete), color = MaterialTheme.colorScheme.error) },
+                text = { Text(stringResource(R.string.list_hide), color = MaterialTheme.colorScheme.error) },
                 onClick = {
                     menuExpanded = false
                     onDelete()
@@ -440,7 +440,7 @@ private fun BookmarkSetRow(
                 }
             )
             DropdownMenuItem(
-                text = { Text(stringResource(R.string.btn_delete), color = MaterialTheme.colorScheme.error) },
+                text = { Text(stringResource(R.string.list_hide), color = MaterialTheme.colorScheme.error) },
                 onClick = {
                     menuExpanded = false
                     onDelete()

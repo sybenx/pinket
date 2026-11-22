@@ -13,15 +13,34 @@ import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 
+/**
+ * Custom emojis: your emoji list (kind 10030), your emoji sets (kind 30030) and the sets your list uses. Your own list
+ * and sets load from the version the own-list store took as newest (and from ListWriter after it signs); writes go
+ * through ListWriter only. What is shown ([userEmojiList], [ownSets], [resolvedEmojis]) has ListWriter's pending
+ * changes laid over it and leaves out your sets hidden here.
+ */
 class CustomEmojiRepository(private val context: Context, pubkeyHex: String? = null) {
     private var prefs: SharedPreferences =
         context.getSharedPreferences(prefsName(pubkeyHex), Context.MODE_PRIVATE)
 
+    /** Your emoji list as last loaded (no pending changes). */
+    @Volatile private var loadedList: UserEmojiList? = null
+
     private val _userEmojiList = MutableStateFlow<UserEmojiList?>(null)
+    /** Your emoji list as shown (pending changes included). */
     val userEmojiList: StateFlow<UserEmojiList?> = _userEmojiList
 
     private val _ownSets = MutableStateFlow<List<EmojiSet>>(emptyList())
+    /** Your emoji sets as shown (pending changes included, hidden ones left out). */
     val ownSets: StateFlow<List<EmojiSet>> = _ownSets
+
+    /** ListWriter's pending changes to your emoji list (d = null) and sets (by d). */
+    @Volatile private var pendingList: List<PendingChange> = emptyList()
+    @Volatile private var pendingSets: Map<String, List<PendingChange>> = emptyMap()
+    /** Your sets hidden on this device ("30030:d"). */
+    @Volatile private var hidden: Set<String> = emptySet()
+    /** Sets being created (d to title), shown as empty sets until they load. */
+    @Volatile private var creating: Map<String, String> = emptyMap()
 
     private val emojiSets = java.util.concurrent.ConcurrentHashMap<String, EmojiSet>()
 
@@ -53,13 +72,14 @@ class CustomEmojiRepository(private val context: Context, pubkeyHex: String? = n
         loadFromPrefs()
     }
 
+    @Synchronized
     fun updateFromEvent(event: NostrEvent) {
         when (event.kind) {
             Nip30.KIND_USER_EMOJI_LIST -> {
-                val current = _userEmojiList.value
+                val current = loadedList
                 if (current != null && event.created_at <= current.createdAt) return
-                val list = Nip30.parseUserEmojiList(event)
-                _userEmojiList.value = list
+                loadedList = Nip30.parseUserEmojiList(event)
+                publishList()
                 resolveEmojis()
                 saveToPrefs()
             }
@@ -70,7 +90,7 @@ class CustomEmojiRepository(private val context: Context, pubkeyHex: String? = n
                 if (existing != null && event.created_at <= existing.createdAt) return
                 emojiSets[key] = set
                 if (set.pubkey == ownerPubkey) {
-                    _ownSets.value = emojiSets.values.filter { it.pubkey == ownerPubkey }.sortedBy { it.title }
+                    publishOwnSets()
                     saveOwnSetsToPrefs()
                 }
                 resolveEmojis()
@@ -79,20 +99,66 @@ class CustomEmojiRepository(private val context: Context, pubkeyHex: String? = n
         }
     }
 
+    /** ListWriter's pending changes (any kind; only the emoji list and sets are used) and the sets hidden here. */
+    @Synchronized
+    fun setOverlay(pendingChanges: List<PendingChange>, hiddenKeys: Set<String>) {
+        val l = pendingChanges.filter { it.kind == Nip30.KIND_USER_EMOJI_LIST }
+        val p = SetOverlay.byD(pendingChanges, Nip30.KIND_EMOJI_SET)
+        val h = hiddenKeys.filterTo(HashSet()) { it.startsWith("${Nip30.KIND_EMOJI_SET}:") }
+        val c = SetOverlay.creating(pendingChanges, Nip30.KIND_EMOJI_SET)
+        if (l == pendingList && p == pendingSets && h == hidden && c == creating) return
+        pendingList = l
+        pendingSets = p
+        hidden = h
+        creating = c
+        publishList()
+        publishOwnSets()
+        resolveEmojis()
+    }
+
+    private fun publishList() {
+        val base = loadedList
+        val p = pendingList
+        _userEmojiList.value = when {
+            p.isEmpty() -> base
+            else -> {
+                val b = base ?: UserEmojiList(emptyList(), emptyList(), 0)
+                b.copy(emojis = SetOverlay.emojis(b.emojis, p), setReferences = SetOverlay.values(b.setReferences, "a", p).toList())
+            }
+        }
+    }
+
+    private fun shownSet(set: EmojiSet): EmojiSet {
+        if (set.pubkey != ownerPubkey) return set
+        val p = pendingSets[set.dTag] ?: return set
+        return set.copy(title = SetOverlay.title(set.title, p), emojis = SetOverlay.emojis(set.emojis, p))
+    }
+
+    private fun publishOwnSets() {
+        val owner = ownerPubkey
+        val making = if (owner == null) emptyList()
+        else creating.filterKeys { emojiSets["$owner:$it"] == null }.map { (d, t) -> EmojiSet(owner, d, t, emptyList(), 0) }
+        _ownSets.value = (emojiSets.values
+            .filter { it.pubkey == owner && "${Nip30.KIND_EMOJI_SET}:${it.dTag}" !in hidden }
+            .map { shownSet(it) } + making)
+            .sortedBy { it.title }
+    }
+
     fun resolveEmojis() {
         val map = mutableMapOf<String, String>()
-        // Direct emojis from user's kind 10030
-        _userEmojiList.value?.emojis?.forEach { emoji ->
+        val list = _userEmojiList.value
+        // Direct emojis from your emoji list
+        list?.emojis?.forEach { emoji ->
             if (emoji.url.isNotBlank()) {
                 map[emoji.shortcode] = emoji.url
             }
         }
-        // Emojis from referenced sets
-        _userEmojiList.value?.setReferences?.forEach { ref ->
+        // Emojis from referenced sets (your own as shown)
+        list?.setReferences?.forEach { ref ->
             val parsed = Nip30.parseSetReference(ref)
             if (parsed != null) {
                 val key = "${parsed.second}:${parsed.third}"
-                emojiSets[key]?.emojis?.forEach { emoji ->
+                emojiSets[key]?.let { shownSet(it) }?.emojis?.forEach { emoji ->
                     map.putIfAbsent(emoji.shortcode, emoji.url)
                 }
             }
@@ -157,6 +223,7 @@ class CustomEmojiRepository(private val context: Context, pubkeyHex: String? = n
     // repo is called before the pubkey swap, so wiping `prefs` here would
     // destroy the outgoing account's per-pubkey file.
     fun clear() {
+        loadedList = null
         _userEmojiList.value = null
         _ownSets.value = emptyList()
         emojiSets.clear()
@@ -175,7 +242,7 @@ class CustomEmojiRepository(private val context: Context, pubkeyHex: String? = n
     }
 
     private fun saveToPrefs() {
-        val list = _userEmojiList.value ?: return
+        val list = loadedList ?: return
         val emojisArr = JSONArray()
         for (emoji in list.emojis) {
             val obj = JSONObject()
@@ -194,7 +261,8 @@ class CustomEmojiRepository(private val context: Context, pubkeyHex: String? = n
     }
 
     private fun saveOwnSetsToPrefs() {
-        val sets = _ownSets.value
+        // What was loaded (hidden ones too), never the pending changes.
+        val sets = emojiSets.values.filter { it.pubkey == ownerPubkey }.sortedBy { it.title }
         val arr = JSONArray()
         for (set in sets) {
             val obj = JSONObject()
@@ -216,7 +284,7 @@ class CustomEmojiRepository(private val context: Context, pubkeyHex: String? = n
     }
 
     private fun saveReferencedSetsToPrefs() {
-        val refs = _userEmojiList.value?.setReferences ?: return
+        val refs = loadedList?.setReferences ?: return
         val referencedKeys = refs.mapNotNull { ref ->
             val parsed = Nip30.parseSetReference(ref) ?: return@mapNotNull null
             "${parsed.second}:${parsed.third}"
@@ -321,7 +389,8 @@ class CustomEmojiRepository(private val context: Context, pubkeyHex: String? = n
                     val arr = JSONArray(refsJson)
                     (0 until arr.length()).map { arr.getString(it) }
                 } else emptyList()
-                _userEmojiList.value = UserEmojiList(emojis, refs, updated)
+                loadedList = UserEmojiList(emojis, refs, updated)
+                publishList()
             } catch (_: Exception) {}
         }
 
@@ -345,8 +414,8 @@ class CustomEmojiRepository(private val context: Context, pubkeyHex: String? = n
                         createdAt = obj.getLong("createdAt")
                     )
                 }
-                _ownSets.value = sets
                 for (set in sets) emojiSets["${set.pubkey}:${set.dTag}"] = set
+                publishOwnSets()
             } catch (_: Exception) {}
         }
 

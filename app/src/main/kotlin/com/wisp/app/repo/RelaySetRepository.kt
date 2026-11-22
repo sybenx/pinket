@@ -5,7 +5,6 @@ import android.content.SharedPreferences
 import com.wisp.app.nostr.Nip51
 import com.wisp.app.nostr.NostrEvent
 import com.wisp.app.nostr.RelaySet
-import com.wisp.app.relay.RelayConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.Serializable
@@ -28,15 +27,25 @@ class RelaySetRepository(private val context: Context, pubkeyHex: String? = null
     private var ownerPubkey: String? = null
     private var favoriteRelaysTimestamp: Long = 0
 
+    /** Favourites as your newest version holds them (saved); [favoriteRelays] adds the pending changes. */
+    private var baseFavorites: List<String> = emptyList()
+    private var pendingFavorites: List<PendingChange> = emptyList()
+    private var pendingSets: List<PendingChange> = emptyList()
+    private var hiddenSets: Set<String> = emptySet()
+    /** Relay sets being created (d to title), shown as empty sets until they load. */
+    private var creatingSets: Map<String, String> = emptyMap()
+
     init {
         loadFromPrefs()
     }
 
+    @Synchronized
     fun setOwner(pubkey: String) {
         ownerPubkey = pubkey
         refreshOwnSets()
     }
 
+    @Synchronized
     fun updateRelaySetFromEvent(event: NostrEvent) {
         val set = Nip51.parseRelaySetNamed(event) ?: return
         val key = "${event.pubkey}:${set.dTag}"
@@ -46,88 +55,56 @@ class RelaySetRepository(private val context: Context, pubkeyHex: String? = null
         refreshOwnSets()
     }
 
+    @Synchronized
     fun updateFavoriteRelaysFromEvent(event: NostrEvent) {
         if (event.created_at <= favoriteRelaysTimestamp) return
         favoriteRelaysTimestamp = event.created_at
         val urls = Nip51.parseRelaySet(event)
-        _favoriteRelays.value = urls
+        baseFavorites = urls
+        _favoriteRelays.value = applyPending(urls, pendingFavorites)
         saveFavoritesToPrefs(urls)
     }
+
+    /** The app shows favourite relays loaded from a version of yours (saved here, pending changes not counted). */
+    @Synchronized
+    fun hasSavedFavorites(): Boolean = baseFavorites.isNotEmpty()
 
     fun getSet(pubkey: String, dTag: String): RelaySet? {
         return relaySets["$pubkey:$dTag"]
     }
 
-    fun isFavorite(url: String): Boolean = url in _favoriteRelays.value
+    /** Favourite (shown, pending changes included). */
+    fun isFavorite(url: String): Boolean = _favoriteRelays.value.any { norm(it) == norm(url) }
 
-    fun addFavorite(url: String): List<String> {
-        val current = _favoriteRelays.value.toMutableList()
-        val normalized = url.trim().trimEnd('/')
-        if (normalized !in current) current.add(normalized)
-        _favoriteRelays.value = current
-        saveFavoritesToPrefs(current)
-        return current
-    }
-
-    fun removeFavorite(url: String): List<String> {
-        val current = _favoriteRelays.value.toMutableList()
-        current.remove(url.trim().trimEnd('/'))
-        _favoriteRelays.value = current
-        saveFavoritesToPrefs(current)
-        return current
-    }
-
-    fun addRelayToSet(url: String, dTag: String): RelaySet? {
-        val owner = ownerPubkey ?: return null
-        val key = "$owner:$dTag"
-        val existing = relaySets[key] ?: return null
-        val normalized = url.trim().trimEnd('/')
-        if (normalized in existing.relays) return existing
-        val updated = existing.copy(relays = existing.relays + normalized)
-        relaySets[key] = updated
-        refreshOwnSets()
-        return updated
-    }
-
-    fun removeRelayFromSet(url: String, dTag: String): RelaySet? {
-        val owner = ownerPubkey ?: return null
-        val key = "$owner:$dTag"
-        val existing = relaySets[key] ?: return null
-        val updated = existing.copy(relays = existing.relays - url.trim().trimEnd('/'))
-        relaySets[key] = updated
-        refreshOwnSets()
-        return updated
-    }
-
-    fun createRelaySet(name: String, relays: Set<String>, dTag: String? = null): RelaySet? {
-        val owner = ownerPubkey ?: return null
-        val tag = dTag ?: name.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-')
-        val set = RelaySet(
-            pubkey = owner,
-            dTag = tag,
-            name = name,
-            relays = relays.map { it.trim().trimEnd('/') }.filter { RelayConfig.isValidUrl(it) }.toSet(),
-            createdAt = System.currentTimeMillis() / 1000
-        )
-        relaySets["$owner:$tag"] = set
-        refreshOwnSets()
-        return set
-    }
-
-    fun removeRelaySet(dTag: String) {
-        val owner = ownerPubkey ?: return
-        relaySets.remove("$owner:$dTag")
+    /**
+     * Lay list changes still waiting to be written (favourites 10012, relay sets 30002) and the relay sets hidden
+     * here ("30002:d") over what your newest versions hold, so a tap shows at once. What is saved comes only from
+     * signed versions ([updateFavoriteRelaysFromEvent], [updateRelaySetFromEvent]).
+     */
+    @Synchronized
+    fun setOverlay(pending: List<PendingChange>, hidden: Set<String>) {
+        pendingFavorites = pending.filter { it.kind == Nip51.KIND_FAVORITE_RELAYS && it.d == null }
+        pendingSets = pending.filter { it.kind == Nip51.KIND_RELAY_SET && it.d != null && !it.creating }
+        hiddenSets = hidden.filter { it.startsWith("${Nip51.KIND_RELAY_SET}:") }.toSet()
+        creatingSets = SetOverlay.creating(pending, Nip51.KIND_RELAY_SET)
+        _favoriteRelays.value = applyPending(baseFavorites, pendingFavorites)
         refreshOwnSets()
     }
 
+    @Synchronized
     fun clear() {
         relaySets.clear()
         _ownRelaySets.value = emptyList()
         _favoriteRelays.value = emptyList()
+        baseFavorites = emptyList()
+        pendingFavorites = emptyList()
+        pendingSets = emptyList()
+        hiddenSets = emptySet()
         ownerPubkey = null
         favoriteRelaysTimestamp = 0
     }
 
+    @Synchronized
     fun reload(pubkeyHex: String?) {
         clear()
         prefs = context.getSharedPreferences(prefsName(pubkeyHex), Context.MODE_PRIVATE)
@@ -137,8 +114,27 @@ class RelaySetRepository(private val context: Context, pubkeyHex: String? = null
     private fun refreshOwnSets() {
         val owner = ownerPubkey ?: return
         val own = relaySets.values.filter { it.pubkey == owner }.sortedBy { it.name }
-        _ownRelaySets.value = own
         saveSetsToPrefs(own)
+        val making = creatingSets.filterKeys { relaySets["$owner:$it"] == null }.map { (d, t) -> RelaySet(owner, d, t, emptySet(), 0) }
+        _ownRelaySets.value = own
+            .filter { "${Nip51.KIND_RELAY_SET}:${it.dTag}" !in hiddenSets }
+            .map { set ->
+                val mine = pendingSets.filter { it.d == set.dTag }
+                if (mine.isEmpty()) set else set.copy(relays = applyPending(set.relays.toList(), mine).toSet())
+            } + making
+    }
+
+    /** [urls] with the pending `relay` adds and removes laid over (compared in one spelling). */
+    private fun applyPending(urls: List<String>, pending: List<PendingChange>): List<String> {
+        var out = urls
+        for (p in pending) {
+            if (p.entry.size < 2 || (p.entry[0] != "relay" && p.entry[0] != "r")) continue
+            val url = p.entry[1].trim().trimEnd('/')
+            out = if (p.wanted) {
+                if (out.any { norm(it) == norm(url) }) out else out + url
+            } else out.filterNot { norm(it) == norm(url) }
+        }
+        return out
     }
 
     private fun saveSetsToPrefs(sets: List<RelaySet>) {
@@ -166,7 +162,8 @@ class RelaySetRepository(private val context: Context, pubkeyHex: String? = null
         val favsStr = prefs.getString("favorite_relays", null)
         if (favsStr != null) {
             try {
-                _favoriteRelays.value = json.decodeFromString<List<String>>(favsStr)
+                baseFavorites = json.decodeFromString<List<String>>(favsStr)
+                _favoriteRelays.value = applyPending(baseFavorites, pendingFavorites)
             } catch (_: Exception) {}
         }
     }
@@ -181,6 +178,11 @@ class RelaySetRepository(private val context: Context, pubkeyHex: String? = null
     )
 
     companion object {
+        /** The d tag this app gives a relay set named [name]. */
+        fun slug(name: String): String = name.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-')
+
+        private fun norm(url: String): String = url.trim().lowercase().trimEnd('/')
+
         private fun prefsName(pubkeyHex: String?): String =
             if (pubkeyHex != null) "wisp_relay_sets_$pubkeyHex" else "wisp_relay_sets"
     }

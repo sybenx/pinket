@@ -12,7 +12,7 @@ import com.wisp.app.nostr.LocalSigner
 import com.wisp.app.nostr.NostrEvent
 import com.wisp.app.nostr.NostrSigner
 import com.wisp.app.nostr.NipA3
-import com.wisp.app.nostr.ProfileContent
+import com.wisp.app.nostr.ProfileData
 import com.wisp.app.R
 import com.wisp.app.util.Monero
 import com.wisp.app.relay.RelayPool
@@ -131,7 +131,16 @@ class ProfileViewModel(app: Application) : AndroidViewModel(app) {
     private var selfFetchGeneration = 0L
     private var eoseJob: Job? = null
 
-    private fun applyProfile(profile: com.wisp.app.nostr.ProfileData) {
+    /** Set by Navigation (FeedViewModel.listWriter): the only place that signs your profile. */
+    var listWriter: ListWriter? = null
+
+    /** The profile the form was last filled from: Save sends only the fields that differ from it. */
+    private var startProfile: ProfileData? = null
+
+    private fun form() = ProfileForm(_name.value, _about.value, _picture.value, _nip05.value, _banner.value, _lud16.value)
+
+    private fun applyProfile(profile: ProfileData) {
+        startProfile = profile
         _name.value = profile.displayName?.ifBlank { null } ?: profile.name ?: ""
         _about.value = profile.about ?: ""
         _picture.value = profile.picture ?: ""
@@ -152,6 +161,7 @@ class ProfileViewModel(app: Application) : AndroidViewModel(app) {
         val pubkeyHex = keyRepo.getPubkeyHex() ?: return
         eventRepoRef = eventRepo
         latestProfileEvent = null
+        startProfile = null
         loadedMoneroAddress = ""
         _moneroAddress.value = ""
 
@@ -263,33 +273,37 @@ class ProfileViewModel(app: Application) : AndroidViewModel(app) {
             _error.value = getApplication<Application>().getString(R.string.profile_monero_address_invalid)
             return false
         }
-        val edits = ProfileContent.editorEdits(
-            name = _name.value, about = _about.value, picture = _picture.value,
-            nip05 = _nip05.value, banner = _banner.value, lud16 = _lud16.value
-        )
+        // Only the fields changed in the form: the list writer applies them to the newest profile.
+        val changes = ProfileEdits.changes(startProfile, form())
+        val profileShown = startProfile != null
+        val writer = listWriter
+        if (writer == null && changes.isNotEmpty()) {
+            _error.value = "Not logged in"
+            return false
+        }
 
         _publishing.value = true
         _error.value = null
         viewModelScope.launch {
             try {
-                val fetched = awaitSelfFetch(relayPool, pubkeyHex)
-                val repo = eventRepoRef
-
-                // Kind 0: newest raw content we can find, then overwrite edited fields only.
-                val base = listOfNotNull(latestProfileEvent, repo?.newestCachedEvent(0, pubkeyHex))
-                    .maxByOrNull { it.created_at }
-                if (base == null && (repo?.getProfileData(pubkeyHex) != null || !fetched)) {
-                    // A profile exists (or may exist) but its full content did not load.
-                    // Publishing from nothing would drop fields this editor does not show.
-                    _error.value = getApplication<Application>().getString(R.string.profile_not_saved)
-                    return@launch
+                // Kind 0 goes through the list writer: newest version from the write relays, changed fields
+                // only, everything else kept. A refusal keeps the editor open with what was typed.
+                if (changes.isNotEmpty()) {
+                    val r = writer!!.setProfileText(changes, expected = profileShown, quiet = true)
+                    if (r is ListResult.Refused) {
+                        _error.value = getApplication<Application>().getString(R.string.profile_not_saved)
+                        return@launch
+                    }
+                    if (r is ListResult.Sent) ProfileData.fromEvent(r.event)?.let { startProfile = it }
                 }
-                val content = ProfileContent.merge(base?.content, edits)
-                val profileEvent = s.signEvent(kind = 0, content = content)
-                relayPool.sendToWriteRelays(ClientMessage.event(profileEvent))
+
+                if (!moneroEdited) return@launch
+                val fetched = awaitSelfFetch(relayPool, pubkeyHex)
 
                 // Kind 10133: only when the field was edited, and only the Monero entry.
                 if (moneroEdited) publishMonero(relayPool, s, pubkeyHex, desiredMonero, fetched)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _error.value = "Failed to publish: ${e.message}"
             } finally {

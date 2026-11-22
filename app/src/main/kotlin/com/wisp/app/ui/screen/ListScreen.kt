@@ -94,13 +94,13 @@ fun ListScreen(
     if (showDeleteConfirm) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
-            title = { Text(stringResource(R.string.btn_delete_list)) },
-            text = { Text("Are you sure you want to delete \"${followSet?.name}\"?") },
+            title = { Text(stringResource(R.string.list_hide)) },
+            text = { Text(stringResource(R.string.list_hide_confirm, followSet?.name ?: "")) },
             confirmButton = {
                 TextButton(onClick = {
                     showDeleteConfirm = false
                     onDeleteList?.invoke()
-                }) { Text(stringResource(R.string.btn_delete), color = MaterialTheme.colorScheme.error) }
+                }) { Text(stringResource(R.string.list_hide), color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteConfirm = false }) { Text(stringResource(R.string.btn_cancel)) }
@@ -179,7 +179,7 @@ fun ListScreen(
                             }
                             if (isOwnList && onDeleteList != null) {
                                 DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.btn_delete_list), color = MaterialTheme.colorScheme.error) },
+                                    text = { Text(stringResource(R.string.list_hide), color = MaterialTheme.colorScheme.error) },
                                     onClick = {
                                         menuExpanded = false
                                         showDeleteConfirm = true
