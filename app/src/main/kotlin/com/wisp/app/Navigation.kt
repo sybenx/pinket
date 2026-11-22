@@ -3330,7 +3330,8 @@ fun WispNavHost(
                     canPrivateZap = feedViewModel.hasLocalKeypair && notifUserHasDmRelays && notifRecipientHasDmRelays,
                     forcePrivate = notifZapTarget?.id?.let { feedViewModel.eventRepo.isPrivate(it) } == true,
                     recipientPubkey = notifZapTarget?.pubkey,
-                    profileLookup = { feedViewModel.profileRepo.get(it) }
+                    profileLookup = { feedViewModel.profileRepo.get(it) },
+                    payOptions = rememberPayOptions(feedViewModel.eventRepo, notifZapRecipient)
                 )
             }
 

@@ -1584,6 +1584,7 @@ private fun ReferencedNotePostCard(
             hasUserReposted = hasUserReposted,
             repostCount = repostCount,
             onZap = { params.onZap(event) },
+            moneroTips = true,
             hasUserZapped = hasUserZapped,
             likeCount = likeCount,
             replyCount = replyCount,
