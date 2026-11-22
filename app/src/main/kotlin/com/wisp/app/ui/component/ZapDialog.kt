@@ -1,6 +1,7 @@
 package com.wisp.app.ui.component
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,12 +18,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lock
@@ -57,6 +61,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -66,23 +71,34 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import kotlinx.coroutines.delay
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.wisp.app.R
 import com.wisp.app.nostr.ProfileData
+import com.wisp.app.nostr.toNpub
 import com.wisp.app.repo.ExchangeRateRepository
 import com.wisp.app.repo.FiatCurrency
 import com.wisp.app.repo.FiatPreferences
+import com.wisp.app.repo.PayMethod
+import com.wisp.app.repo.PayOptions
 import com.wisp.app.repo.ZapPreferences
 import com.wisp.app.repo.ZapPreset
 import com.wisp.app.ui.theme.WispThemeColors
 import com.wisp.app.ui.theme.inkOrWhite
 import com.wisp.app.ui.util.AmountFormatter
+import com.wisp.app.util.Monero
+import com.wisp.app.util.MoneroWallet
+import java.math.BigDecimal
 import kotlinx.coroutines.launch
 
 /**
@@ -127,7 +143,57 @@ fun ZapDialog(
     /** Recipient pubkey for the optional recipient header row. */
     recipientPubkey: String? = null,
     /** Profile lookup for the recipient header row. Returns null if unknown. */
-    profileLookup: (String) -> ProfileData? = { null }
+    profileLookup: (String) -> ProfileData? = { null },
+    /**
+     * What the recipient accepts. Pass it only where Monero tips are offered
+     * (posts and profiles). Null, or no Monero address, keeps the Bitcoin-only
+     * sheet exactly as before.
+     */
+    payOptions: PayOptions? = null
+) {
+    val recipientProfile = recipientPubkey?.let { profileLookup(it) }
+    val options = payOptions?.let {
+        it.copy(lightningAddress = it.lightningAddress ?: recipientProfile?.lud16?.trim()?.ifEmpty { null })
+    }
+    if (options == null || !options.acceptsMonero) {
+        BitcoinZapSheet(
+            isWalletConnected = isWalletConnected,
+            onDismiss = onDismiss,
+            onZap = onZap,
+            onGoToWallet = onGoToWallet,
+            canPrivateZap = canPrivateZap,
+            forcePrivate = forcePrivate,
+            initialSatsHint = initialSatsHint,
+            recipientProfile = recipientProfile
+        )
+        return
+    }
+    PayChoiceSheet(
+        options = options,
+        isWalletConnected = isWalletConnected,
+        onDismiss = onDismiss,
+        onZap = onZap,
+        onGoToWallet = onGoToWallet,
+        canPrivateZap = canPrivateZap,
+        forcePrivate = forcePrivate,
+        initialSatsHint = initialSatsHint,
+        recipientPubkey = recipientPubkey,
+        recipientProfile = recipientProfile
+    )
+}
+
+/** The Bitcoin-only zap sheet: what [ZapDialog] has always shown. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BitcoinZapSheet(
+    isWalletConnected: Boolean,
+    onDismiss: () -> Unit,
+    onZap: (amountMsats: Long, message: String, isAnonymous: Boolean, isPrivate: Boolean) -> Unit,
+    onGoToWallet: () -> Unit,
+    canPrivateZap: Boolean,
+    forcePrivate: Boolean,
+    initialSatsHint: Int?,
+    recipientProfile: ProfileData?
 ) {
     if (!isWalletConnected) {
         AlertDialog(
@@ -147,9 +213,46 @@ fun ZapDialog(
         return
     }
 
+    val scope = rememberCoroutineScope()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    fun closeSheet() {
+        scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        // Drag handle replaces the iOS "swipe down" affordance.
+    ) {
+        BitcoinZapContent(
+            onZap = onZap,
+            closeSheet = { closeSheet() },
+            canPrivateZap = canPrivateZap,
+            forcePrivate = forcePrivate,
+            initialSatsHint = initialSatsHint,
+            recipientProfile = recipientProfile
+        )
+    }
+}
+
+/**
+ * Body of the Bitcoin zap sheet. [header] (the Bitcoin | Monero switch) is
+ * drawn under the toolbar when the recipient takes both.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun BitcoinZapContent(
+    onZap: (amountMsats: Long, message: String, isAnonymous: Boolean, isPrivate: Boolean) -> Unit,
+    closeSheet: () -> Unit,
+    canPrivateZap: Boolean,
+    forcePrivate: Boolean,
+    initialSatsHint: Int?,
+    recipientProfile: ProfileData?,
+    header: (@Composable () -> Unit)? = null
+) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
-    val scope = rememberCoroutineScope()
     val accent = WispThemeColors.zapColor
     val onAccent = inkOrWhite(accent)
 
@@ -174,13 +277,6 @@ fun ZapDialog(
     var showSavePresetDialog by remember { mutableStateOf(false) }
     var privacyMenuExpanded by remember { mutableStateOf(false) }
     val amountFocusRequester = remember { FocusRequester() }
-
-    val recipientProfile = recipientPubkey?.let { profileLookup(it) }
-
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    fun closeSheet() {
-        scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
-    }
 
     LaunchedEffect(initialSatsHint) {
         val hint = initialSatsHint ?: return@LaunchedEffect
@@ -235,380 +331,375 @@ fun ZapDialog(
         presets.none { it.amountSats == effectiveAmount } &&
         presets.size < 8
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        // Drag handle replaces the iOS "swipe down" affordance.
+    // Two-row stack: scrollable content on top, pinned Zap button
+    // at the bottom. `imePadding()` lifts the whole stack above the
+    // keyboard so the Zap button stays visible even when the
+    // amount field is focused. `navigationBarsPadding()` keeps it
+    // above the gesture-nav handle on devices without IME up.
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .imePadding()
     ) {
-        // Two-row stack: scrollable content on top, pinned Zap button
-        // at the bottom. `imePadding()` lifts the whole stack above the
-        // keyboard so the Zap button stays visible even when the
-        // amount field is focused. `navigationBarsPadding()` keeps it
-        // above the gesture-nav handle on devices without IME up.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .imePadding()
+                .weight(1f, fill = false)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f, fill = false)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-            // ── 1. Toolbar ──────────────────────────────────────────
+        // ── 1. Toolbar ──────────────────────────────────────────
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            PillButton(text = stringResource(R.string.btn_close), onClick = { closeSheet() })
+            PillButton(
+                text = "Presets",
+                onClick = { showSavePresetDialog = true },
+                contentColor = accent,
+                borderColor = accent.copy(alpha = 0.45f)
+            )
+        }
+
+        header?.invoke()
+
+        // ── 2. Recipient row (optional) ─────────────────────────
+        if (recipientProfile != null) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                PillButton(text = stringResource(R.string.btn_close), onClick = { closeSheet() })
-                PillButton(
-                    text = "Presets",
-                    onClick = { showSavePresetDialog = true },
-                    contentColor = accent,
-                    borderColor = accent.copy(alpha = 0.45f)
+                AsyncImage(
+                    model = recipientProfile.picture,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
                 )
-            }
-
-            // ── 2. Recipient row (optional) ─────────────────────────
-            if (recipientProfile != null) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    AsyncImage(
-                        model = recipientProfile.picture,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        recipientProfile.displayString,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1
                     )
-                    Spacer(Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
+                    if (!recipientProfile.lud16.isNullOrBlank()) {
                         Text(
-                            recipientProfile.displayString,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            recipientProfile.lud16,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1
                         )
-                        if (!recipientProfile.lud16.isNullOrBlank()) {
-                            Text(
-                                recipientProfile.lud16,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1
-                            )
-                        }
                     }
-                    if (!recipientProfile.lud16.isNullOrBlank()) {
-                        IconButton(onClick = {
-                            clipboard.setText(AnnotatedString(recipientProfile.lud16!!))
-                        }) {
-                            Icon(
-                                Icons.Filled.ContentCopy,
-                                contentDescription = "Copy lightning address",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
+                }
+                if (!recipientProfile.lud16.isNullOrBlank()) {
+                    IconButton(onClick = {
+                        clipboard.setText(AnnotatedString(recipientProfile.lud16!!))
+                    }) {
+                        Icon(
+                            Icons.Filled.ContentCopy,
+                            contentDescription = "Copy lightning address",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
             }
+        }
 
-            // ── 3. Hero amount ──────────────────────────────────────
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                val heroText = if (fiatMode && effectiveAmount > 0) {
+        // ── 3. Hero amount ──────────────────────────────────────
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            val heroText = if (fiatMode && effectiveAmount > 0) {
+                AmountFormatter.formatShort(effectiveAmount, context)
+            } else {
+                "%,d".format(effectiveAmount)
+            }
+            Text(
+                heroText,
+                color = accent,
+                fontSize = 56.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                if (fiatMode) ExchangeRateRepository.currencyFor(fiatCurrency).code else "sats",
+                color = accent.copy(alpha = 0.75f),
+                style = MaterialTheme.typography.titleSmall
+            )
+        }
+
+        // ── 4. Preset strip ─────────────────────────────────────
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            presets.forEach { preset ->
+                val selected = !isCustom && selectedPreset?.amountSats == preset.amountSats
+                PresetPill(
+                    label = AmountFormatter.formatShort(preset.amountSats, context),
+                    selected = selected,
+                    accent = accent,
+                    onClick = {
+                        selectedPreset = preset
+                        isCustom = false
+                        // Auto-fill the preset's optional default
+                        // message only when the message field is
+                        // currently empty (don't clobber typing).
+                        if (preset.message.isNotEmpty() && message.isBlank()) {
+                            message = preset.message
+                        }
+                    }
+                )
+            }
+            CustomPlusPill(
+                label = if (isCustom && effectiveAmount > 0)
                     AmountFormatter.formatShort(effectiveAmount, context)
-                } else {
-                    "%,d".format(effectiveAmount)
+                else "Custom",
+                selected = isCustom,
+                accent = accent,
+                showPlus = canSavePreset,
+                onClick = {
+                    isCustom = true
+                    if (effectiveAmount == 0L) {
+                        customAmountTfv = TextFieldValue("")
+                    } else {
+                        // Re-seed and select-all so first keystroke replaces.
+                        seedCustomAmount(customAmount) { customAmountTfv = it }
+                    }
+                    runCatching { amountFocusRequester.requestFocus() }
+                },
+                onPlusClick = {
+                    // Save the current custom amount as a new preset
+                    if (canSavePreset) {
+                        presets = zapPrefsRepo.addPreset(
+                            ZapPreset(effectiveAmount, message.trim())
+                        ).sortedBy { it.amountSats }
+                    }
                 }
-                Text(
-                    heroText,
-                    color = accent,
-                    fontSize = 56.sp,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center
-                )
-                Text(
-                    if (fiatMode) ExchangeRateRepository.currencyFor(fiatCurrency).code else "sats",
-                    color = accent.copy(alpha = 0.75f),
-                    style = MaterialTheme.typography.titleSmall
-                )
-            }
+            )
+        }
 
-            // ── 4. Preset strip ─────────────────────────────────────
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                presets.forEach { preset ->
-                    val selected = !isCustom && selectedPreset?.amountSats == preset.amountSats
-                    PresetPill(
-                        label = AmountFormatter.formatShort(preset.amountSats, context),
-                        selected = selected,
-                        accent = accent,
-                        onClick = {
-                            selectedPreset = preset
-                            isCustom = false
-                            // Auto-fill the preset's optional default
-                            // message only when the message field is
-                            // currently empty (don't clobber typing).
-                            if (preset.message.isNotEmpty() && message.isBlank()) {
-                                message = preset.message
+        // ── 5. Inline custom amount field ───────────────────────
+        // Always rendered (the keyboard is up on mount per iOS),
+        // but only contributes to the amount when isCustom = true.
+        // The seed is pre-selected so the first keystroke replaces
+        // it; preset taps switch isCustom off and the typed value
+        // is preserved if the user comes back.
+        OutlinedTextField(
+            value = customAmountTfv,
+            onValueChange = { newTfv ->
+                val filtered = newTfv.text.filter { it.isDigit() }
+                // Preserve cursor / selection across the digit filter.
+                customAmountTfv = newTfv.copy(text = filtered)
+                if (filtered.isNotEmpty()) isCustom = true
+            },
+            label = {
+                Text(if (fiatMode) "Custom (cents)" else "Custom (sats)")
+            },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(amountFocusRequester)
+        )
+
+        // ── 6. Message ──────────────────────────────────────────
+        OutlinedTextField(
+            value = message,
+            onValueChange = { message = it },
+            placeholder = { Text("Message (optional)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        // ── 7. Privacy dropdown ─────────────────────────────────
+        if (!forcePrivate) {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { privacyMenuExpanded = true },
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val (icon, label, helper) = when {
+                            isPrivate -> Triple(Icons.Filled.Lock, "Private", "Recipient only — sent via DM-relay route.")
+                            isAnonymous -> Triple(Icons.Outlined.VisibilityOff, "Anonymous", "Recipient won't see your identity.")
+                            else -> Triple(Icons.Outlined.Visibility, "Public", null)
+                        }
+                        Icon(
+                            icon,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(label, style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface)
+                            if (helper != null) {
+                                Text(
+                                    helper,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
+                        }
+                        Icon(
+                            Icons.Filled.KeyboardArrowDown,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                DropdownMenu(
+                    expanded = privacyMenuExpanded,
+                    onDismissRequest = { privacyMenuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Public") },
+                        leadingIcon = { Icon(Icons.Outlined.Visibility, null) },
+                        onClick = {
+                            isPrivate = false
+                            isAnonymous = false
+                            privacyMenuExpanded = false
                         }
                     )
-                }
-                CustomPlusPill(
-                    label = if (isCustom && effectiveAmount > 0)
-                        AmountFormatter.formatShort(effectiveAmount, context)
-                    else "Custom",
-                    selected = isCustom,
-                    accent = accent,
-                    showPlus = canSavePreset,
-                    onClick = {
-                        isCustom = true
-                        if (effectiveAmount == 0L) {
-                            customAmountTfv = TextFieldValue("")
-                        } else {
-                            // Re-seed and select-all so first keystroke replaces.
-                            seedCustomAmount(customAmount) { customAmountTfv = it }
+                    DropdownMenuItem(
+                        text = { Text("Anonymous") },
+                        leadingIcon = { Icon(Icons.Outlined.VisibilityOff, null) },
+                        onClick = {
+                            isAnonymous = true
+                            isPrivate = false
+                            privacyMenuExpanded = false
                         }
-                        runCatching { amountFocusRequester.requestFocus() }
-                    },
-                    onPlusClick = {
-                        // Save the current custom amount as a new preset
-                        if (canSavePreset) {
-                            presets = zapPrefsRepo.addPreset(
-                                ZapPreset(effectiveAmount, message.trim())
-                            ).sortedBy { it.amountSats }
-                        }
-                    }
-                )
-            }
-
-            // ── 5. Inline custom amount field ───────────────────────
-            // Always rendered (the keyboard is up on mount per iOS),
-            // but only contributes to the amount when isCustom = true.
-            // The seed is pre-selected so the first keystroke replaces
-            // it; preset taps switch isCustom off and the typed value
-            // is preserved if the user comes back.
-            OutlinedTextField(
-                value = customAmountTfv,
-                onValueChange = { newTfv ->
-                    val filtered = newTfv.text.filter { it.isDigit() }
-                    // Preserve cursor / selection across the digit filter.
-                    customAmountTfv = newTfv.copy(text = filtered)
-                    if (filtered.isNotEmpty()) isCustom = true
-                },
-                label = {
-                    Text(if (fiatMode) "Custom (cents)" else "Custom (sats)")
-                },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusRequester(amountFocusRequester)
-            )
-
-            // ── 6. Message ──────────────────────────────────────────
-            OutlinedTextField(
-                value = message,
-                onValueChange = { message = it },
-                placeholder = { Text("Message (optional)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            // ── 7. Privacy dropdown ─────────────────────────────────
-            if (!forcePrivate) {
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { privacyMenuExpanded = true },
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val (icon, label, helper) = when {
-                                isPrivate -> Triple(Icons.Filled.Lock, "Private", "Recipient only — sent via DM-relay route.")
-                                isAnonymous -> Triple(Icons.Outlined.VisibilityOff, "Anonymous", "Recipient won't see your identity.")
-                                else -> Triple(Icons.Outlined.Visibility, "Public", null)
-                            }
-                            Icon(
-                                icon,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(label, style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurface)
-                                if (helper != null) {
-                                    Text(
-                                        helper,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            Icon(
-                                Icons.Filled.KeyboardArrowDown,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-                    DropdownMenu(
-                        expanded = privacyMenuExpanded,
-                        onDismissRequest = { privacyMenuExpanded = false }
-                    ) {
+                    )
+                    if (canPrivateZap) {
                         DropdownMenuItem(
-                            text = { Text("Public") },
-                            leadingIcon = { Icon(Icons.Outlined.Visibility, null) },
+                            text = { Text("Private") },
+                            leadingIcon = { Icon(Icons.Filled.Lock, null) },
                             onClick = {
-                                isPrivate = false
+                                isPrivate = true
                                 isAnonymous = false
                                 privacyMenuExpanded = false
                             }
                         )
-                        DropdownMenuItem(
-                            text = { Text("Anonymous") },
-                            leadingIcon = { Icon(Icons.Outlined.VisibilityOff, null) },
-                            onClick = {
-                                isAnonymous = true
-                                isPrivate = false
-                                privacyMenuExpanded = false
-                            }
-                        )
-                        if (canPrivateZap) {
-                            DropdownMenuItem(
-                                text = { Text("Private") },
-                                leadingIcon = { Icon(Icons.Filled.Lock, null) },
-                                onClick = {
-                                    isPrivate = true
-                                    isAnonymous = false
-                                    privacyMenuExpanded = false
-                                }
-                            )
-                        }
                     }
                 }
             }
+        }
 
-            // ── 8. Instant zaps toggle ──────────────────────────────
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_bolt),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        if (fiatMode) "Instant payments" else "Instant zaps",
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.weight(1f),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Switch(
-                        checked = instantZapsEnabled,
-                        onCheckedChange = {
-                            instantZapsEnabled = it
-                            interfacePrefs.setQuickZapEnabled(it)
-                        },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = accent,
-                            uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            uncheckedTrackColor = MaterialTheme.colorScheme.surface
-                        )
-                    )
-                }
-            }
-
-            } // end scrollable content Column
-
-            // ── 9. Zap button — pinned to the bottom of the sheet ──
-            // Lives outside the scrollable region above so it stays on
-            // screen even when the keyboard is up. The outer Column's
-            // imePadding() ensures it floats above the IME.
-            Column(
+        // ── 8. Instant zaps toggle ──────────────────────────────
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp)
-                    .padding(top = 12.dp, bottom = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                if (overHardCap) {
-                    Text(
-                        "Max ${"%,d".format(ZAP_HARD_CAP_SATS)} sats per zap",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = TextAlign.Center
-                    )
-                }
-                Button(
-                    onClick = {
-                        if (effectiveAmount > ZAP_SOFT_CONFIRM_SATS) {
-                            showLargeAmountConfirm = true
-                        } else {
-                            onZap(effectiveAmount * 1000, effectiveMessage.ifEmpty { message }, isAnonymous, isPrivate)
-                        }
+                Icon(
+                    painter = painterResource(R.drawable.ic_bolt),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    if (fiatMode) "Instant payments" else "Instant zaps",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Switch(
+                    checked = instantZapsEnabled,
+                    onCheckedChange = {
+                        instantZapsEnabled = it
+                        interfacePrefs.setQuickZapEnabled(it)
                     },
-                    enabled = effectiveAmount > 0 && !overHardCap,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = accent,
-                        contentColor = onAccent,
-                        disabledContainerColor = accent.copy(alpha = 0.35f)
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = accent,
+                        uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        uncheckedTrackColor = MaterialTheme.colorScheme.surface
                     )
-                ) {
-                    Icon(
-                        painter = painterResource(
-                            if (fiatMode) R.drawable.ic_coin_stack else R.drawable.ic_bolt
-                        ),
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        if (fiatMode) "Zap ${AmountFormatter.formatShort(effectiveAmount, context)}"
-                        else "Zap ${"%,d".format(effectiveAmount)} sats",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp
-                    )
-                }
+                )
+            }
+        }
+
+        } // end scrollable content Column
+
+        // ── 9. Zap button — pinned to the bottom of the sheet ──
+        // Lives outside the scrollable region above so it stays on
+        // screen even when the keyboard is up. The outer Column's
+        // imePadding() ensures it floats above the IME.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(top = 12.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (overHardCap) {
+                Text(
+                    "Max ${"%,d".format(ZAP_HARD_CAP_SATS)} sats per zap",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center
+                )
+            }
+            Button(
+                onClick = {
+                    if (effectiveAmount > ZAP_SOFT_CONFIRM_SATS) {
+                        showLargeAmountConfirm = true
+                    } else {
+                        onZap(effectiveAmount * 1000, effectiveMessage.ifEmpty { message }, isAnonymous, isPrivate)
+                    }
+                },
+                enabled = effectiveAmount > 0 && !overHardCap,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = accent,
+                    contentColor = onAccent,
+                    disabledContainerColor = accent.copy(alpha = 0.35f)
+                )
+            ) {
+                Icon(
+                    painter = painterResource(
+                        if (fiatMode) R.drawable.ic_coin_stack else R.drawable.ic_bolt
+                    ),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (fiatMode) "Zap ${AmountFormatter.formatShort(effectiveAmount, context)}"
+                    else "Zap ${"%,d".format(effectiveAmount)} sats",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
+                )
             }
         }
     }
@@ -648,6 +739,529 @@ fun ZapDialog(
             },
             onDismiss = { showSavePresetDialog = false }
         )
+    }
+}
+
+// ─── Bitcoin | Monero ────────────────────────────────────────────────────
+
+/**
+ * Send sheet for a recipient who takes Monero (and maybe Bitcoin too).
+ *
+ * Neither coin is primary: the switch lists [PayOptions.methods] and opens on
+ * the viewer's last-used one. The last-used choice is only written when the
+ * recipient offered a choice. Monero is a hand-off: Pinket opens the phone's
+ * wallet with a payment link and never learns whether it was paid, so there is
+ * no success state and nothing is published or recorded.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PayChoiceSheet(
+    options: PayOptions,
+    isWalletConnected: Boolean,
+    onDismiss: () -> Unit,
+    onZap: (amountMsats: Long, message: String, isAnonymous: Boolean, isPrivate: Boolean) -> Unit,
+    onGoToWallet: () -> Unit,
+    canPrivateZap: Boolean,
+    forcePrivate: Boolean,
+    initialSatsHint: Int?,
+    recipientPubkey: String?,
+    recipientProfile: ProfileData?
+) {
+    val moneroAddress = options.moneroAddress ?: return
+    val context = LocalContext.current
+    val interfacePrefs = remember { com.wisp.app.repo.InterfacePreferences(context) }
+    var method by remember {
+        mutableStateOf(options.initialMethod(interfacePrefs.getLastPayMethod()) ?: PayMethod.MONERO)
+    }
+    var noWalletAmount by remember { mutableStateOf<BigDecimal?>(null) }
+    val recipientName = recipientProfile?.displayString
+        ?: recipientPubkey?.toNpub()?.let { "${it.take(12)}...${it.takeLast(4)}" }
+        ?: Monero.shortAddress(moneroAddress)
+
+    fun rememberChoice(used: PayMethod) {
+        if (options.hasChoice) interfacePrefs.setLastPayMethod(used)
+    }
+
+    // No app on this phone opens monero: links. Swap the sheet for the QR / copy fallback.
+    noWalletAmount?.let { amount ->
+        MoneroNoWalletDialog(
+            address = moneroAddress,
+            amount = amount,
+            recipientName = recipientName,
+            onDismiss = onDismiss
+        )
+        return
+    }
+
+    val scope = rememberCoroutineScope()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    fun closeSheet() {
+        scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
+    }
+    val header: (@Composable () -> Unit)? = if (options.hasChoice) {
+        { PayMethodSwitch(methods = options.methods, selected = method, onSelect = { method = it }) }
+    } else null
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        when (method) {
+            PayMethod.BITCOIN -> if (isWalletConnected) {
+                BitcoinZapContent(
+                    onZap = { amountMsats, message, isAnonymous, isPrivate ->
+                        rememberChoice(PayMethod.BITCOIN)
+                        onZap(amountMsats, message, isAnonymous, isPrivate)
+                    },
+                    closeSheet = { closeSheet() },
+                    canPrivateZap = canPrivateZap,
+                    forcePrivate = forcePrivate,
+                    initialSatsHint = initialSatsHint,
+                    recipientProfile = recipientProfile,
+                    header = header
+                )
+            } else {
+                WalletNotConnectedContent(
+                    closeSheet = { closeSheet() },
+                    onGoToWallet = {
+                        onDismiss()
+                        onGoToWallet()
+                    },
+                    header = header
+                )
+            }
+            PayMethod.MONERO -> MoneroContent(
+                address = moneroAddress,
+                recipientName = recipientName,
+                recipientPicture = recipientProfile?.picture,
+                closeSheet = { closeSheet() },
+                onOpenWallet = { amount ->
+                    rememberChoice(PayMethod.MONERO)
+                    interfacePrefs.setLastMoneroAmount(amount)
+                    if (MoneroWallet.open(context, moneroAddress, amount)) closeSheet()
+                    else noWalletAmount = amount
+                },
+                header = header
+            )
+        }
+    }
+}
+
+/** Two-way "Bitcoin | Monero" switch. Neutral colors; the selected side is raised. */
+@Composable
+private fun PayMethodSwitch(
+    methods: List<PayMethod>,
+    selected: PayMethod,
+    onSelect: (PayMethod) -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(3.dp)
+                .selectableGroup()
+        ) {
+            methods.forEach { m ->
+                val isSelected = m == selected
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(CircleShape)
+                        .selectable(selected = isSelected, role = Role.Tab, onClick = { onSelect(m) }),
+                    shape = CircleShape,
+                    color = if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent,
+                    border = if (isSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)) else null
+                ) {
+                    Text(
+                        stringResource(
+                            when (m) {
+                                PayMethod.BITCOIN -> R.string.pay_method_bitcoin
+                                PayMethod.MONERO -> R.string.pay_method_monero
+                            }
+                        ),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (isSelected) MaterialTheme.colorScheme.onSurface
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Bitcoin side of the switch when no wallet is connected: the usual message, inline. */
+@Composable
+private fun WalletNotConnectedContent(
+    closeSheet: () -> Unit,
+    onGoToWallet: () -> Unit,
+    header: (@Composable () -> Unit)?
+) {
+    val accent = WispThemeColors.zapColor
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .padding(bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Row(modifier = Modifier.fillMaxWidth()) {
+            PillButton(text = stringResource(R.string.btn_close), onClick = closeSheet)
+        }
+        header?.invoke()
+        Text(
+            stringResource(R.string.zap_wallet_not_connected),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            stringResource(R.string.zap_connect_wallet),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Button(
+            onClick = onGoToWallet,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = inkOrWhite(accent))
+        ) {
+            Text(stringResource(R.string.btn_go_to_wallet), fontWeight = FontWeight.Bold, fontSize = 17.sp)
+        }
+    }
+}
+
+/**
+ * Monero side: recipient, short address with copy, XMR amount pills with a
+ * custom "+" entry, an optional fiat hint, and "Open wallet".
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MoneroContent(
+    address: String,
+    recipientName: String,
+    recipientPicture: String?,
+    closeSheet: () -> Unit,
+    onOpenWallet: (BigDecimal) -> Unit,
+    header: (@Composable () -> Unit)?
+) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val accent = WispThemeColors.zapColor
+    val interfacePrefs = remember { com.wisp.app.repo.InterfacePreferences(context) }
+    val fiatPrefs = remember { FiatPreferences.get(context) }
+    val fiatCurrency by fiatPrefs.currency.collectAsState()
+    val presets = Monero.PRESET_AMOUNTS
+
+    // Open on the last amount used: its preset pill, or the custom field.
+    val lastAmount = remember { interfacePrefs.getLastMoneroAmount() }
+    val lastPreset = remember { lastAmount?.let { last -> presets.firstOrNull { it.compareTo(last) == 0 } } }
+    var selectedPreset by remember { mutableStateOf(if (lastAmount == null) presets.first() else lastPreset) }
+    var isCustom by remember { mutableStateOf(lastAmount != null && lastPreset == null) }
+    var customText by remember {
+        mutableStateOf(if (lastAmount != null && lastPreset == null) Monero.formatAmount(lastAmount) else "")
+    }
+    var focusTick by remember { mutableStateOf(0) }
+    val customFocus = remember { FocusRequester() }
+    LaunchedEffect(focusTick) {
+        if (focusTick > 0) runCatching { customFocus.requestFocus() }
+    }
+
+    val amount: BigDecimal? = if (isCustom) Monero.parseAmount(customText) else selectedPreset
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .imePadding()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f, fill = false)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(modifier = Modifier.fillMaxWidth()) {
+                PillButton(text = stringResource(R.string.btn_close), onClick = closeSheet)
+            }
+
+            header?.invoke()
+
+            // Recipient: avatar, name, short address + copy.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                AsyncImage(
+                    model = recipientPicture,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        recipientName,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        Monero.shortAddress(address),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+                IconButton(onClick = { clipboard.setText(AnnotatedString(address)) }) {
+                    Icon(
+                        Icons.Filled.ContentCopy,
+                        contentDescription = stringResource(R.string.monero_copy_address),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            // Amount pills in XMR, then the custom "+" entry.
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                presets.forEach { preset ->
+                    PresetPill(
+                        label = stringResource(R.string.monero_amount_xmr, Monero.formatAmount(preset)),
+                        selected = !isCustom && selectedPreset?.compareTo(preset) == 0,
+                        accent = accent,
+                        onClick = {
+                            selectedPreset = preset
+                            isCustom = false
+                        }
+                    )
+                }
+                val customAmount = if (isCustom) amount else null
+                Surface(
+                    modifier = Modifier.clickable {
+                        isCustom = true
+                        focusTick++
+                    },
+                    shape = CircleShape,
+                    color = if (isCustom) accent else MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    if (customAmount != null) {
+                        Text(
+                            stringResource(R.string.monero_amount_xmr, Monero.formatAmount(customAmount)),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = inkOrWhite(accent),
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp)
+                        )
+                    } else {
+                        Icon(
+                            Icons.Filled.Add,
+                            contentDescription = stringResource(R.string.monero_custom_amount),
+                            tint = if (isCustom) inkOrWhite(accent) else MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier
+                                .padding(horizontal = 18.dp, vertical = 6.dp)
+                                .size(20.dp)
+                        )
+                    }
+                }
+            }
+
+            if (isCustom) {
+                OutlinedTextField(
+                    value = customText,
+                    onValueChange = { new ->
+                        val filtered = new.filter { it.isDigit() || it == '.' || it == ',' }
+                        if (filtered.count { it == '.' || it == ',' } <= 1 && filtered.length <= 20) {
+                            customText = filtered
+                        }
+                    },
+                    label = { Text(stringResource(R.string.monero_amount_label)) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(customFocus)
+                )
+            }
+
+            // Fiat hint only when a price is known. Sending never waits on it.
+            val fiat = amount?.let { ExchangeRateRepository.xmrToFiat(it.toDouble(), fiatCurrency) }
+            if (amount != null && fiat != null) {
+                Text(
+                    stringResource(
+                        R.string.monero_amount_fiat_hint,
+                        Monero.formatAmount(amount),
+                        AmountFormatter.formatFiatApprox(fiat, fiatCurrency)
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(top = 12.dp, bottom = 16.dp)
+        ) {
+            Button(
+                onClick = { amount?.let(onOpenWallet) },
+                enabled = amount != null,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = accent,
+                    contentColor = inkOrWhite(accent),
+                    disabledContainerColor = accent.copy(alpha = 0.35f)
+                )
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_monero),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    stringResource(R.string.monero_open_wallet),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Shown when no app on this phone opens monero: links. The payment link as a
+ * QR code for a wallet on another device, plus the address and amount to paste.
+ */
+@Composable
+private fun MoneroNoWalletDialog(
+    address: String,
+    amount: BigDecimal,
+    recipientName: String,
+    onDismiss: () -> Unit
+) {
+    val clipboard = LocalClipboardManager.current
+    val amountText = Monero.formatAmount(amount)
+    val uri = remember(address, amount) { Monero.paymentUri(address, amount) }
+    val qrBitmap = remember(uri) { generateQrBitmap(uri) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp)
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(24.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        stringResource(R.string.monero_send_title, amountText, recipientName),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Filled.Close, stringResource(R.string.btn_close))
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+
+                // Same QR treatment as the lightning address dialog.
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(256.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color.White)
+                        .padding(8.dp)
+                ) {
+                    Image(
+                        bitmap = qrBitmap.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier.matchParentSize()
+                    )
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(Color.White)
+                            .padding(6.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_monero),
+                            contentDescription = null,
+                            tint = WispThemeColors.zapColor,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+
+                Text(
+                    address,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(16.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PillButton(
+                        text = stringResource(R.string.monero_copy_address),
+                        onClick = { clipboard.setText(AnnotatedString(address)) }
+                    )
+                    PillButton(
+                        text = stringResource(R.string.monero_copy_amount),
+                        onClick = { clipboard.setText(AnnotatedString(amountText)) }
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+
+                Text(
+                    stringResource(R.string.monero_no_wallet_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
     }
 }
 

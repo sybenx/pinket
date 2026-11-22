@@ -513,6 +513,20 @@
     <string name="zap_private_requires_dm_relays">Private zap requires DM relays on both sides</string>
     <string name="zap_x_sats">Zap %d sats</string>
     <string name="zap_failed">Zap Failed</string>
+
+    <!-- Monero tips: Pinket only opens the phone's Monero wallet -->
+    <string name="pay_method_bitcoin">Bitcoin</string>
+    <string name="pay_method_monero">Monero</string>
+    <string name="cd_monero">Monero</string>
+    <string name="monero_open_wallet">Open wallet</string>
+    <string name="monero_custom_amount">Custom amount</string>
+    <string name="monero_amount_label">Amount (XMR)</string>
+    <string name="monero_amount_xmr">%1$s XMR</string>
+    <string name="monero_amount_fiat_hint">%1$s XMR, about %2$s</string>
+    <string name="monero_copy_address">Copy address</string>
+    <string name="monero_copy_amount">Copy amount</string>
+    <string name="monero_send_title">Send %1$s XMR to %2$s</string>
+    <string name="monero_no_wallet_hint">Scan from another device, or paste into any Monero wallet.</string>
     <string name="lightning_invoice_pay_now">Pay Now</string>
     <string name="lightning_invoice_expired">Expired</string>
     <string name="lightning_invoice_any_amount">Any amount</string>

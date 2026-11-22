@@ -146,6 +146,12 @@ fun PostCard(
     onZapLongPress: (() -> Unit)? = null,
     onZapDisabledTap: () -> Unit = {},
     zapEnabled: Boolean = true,
+    /**
+     * Offer Monero on this card's money button. Set only where the screen's send
+     * sheet also gets the author's pay options (feed, thread, search, hashtag and
+     * set feeds, profile posts).
+     */
+    moneroTips: Boolean = false,
     hasUserZapped: Boolean = false,
     likeCount: Int = 0,
     replyCount: Int = 0,
@@ -837,6 +843,9 @@ fun PostCard(
 
         val canSign = LocalCanSign.current
         if (canSign) {
+            // The button shows what the author accepts, never the viewer's habits.
+            val payOptions = if (moneroTips) rememberPayOptions(eventRepo, event.pubkey) else null
+            val moneroOnly = payOptions != null && payOptions.acceptsMonero && !payOptions.acceptsBitcoin
             Row(verticalAlignment = Alignment.CenterVertically) {
                 ActionBar(
                     onReply = onReply,
@@ -868,6 +877,7 @@ fun PostCard(
                     // `zapEnabled` short-circuit in ActionBar).
                     zapEnabled = zapEnabled && !isOwnEvent,
                     onZapDisabledTap = onZapDisabledTap,
+                    moneroOnly = moneroOnly,
                     modifier = Modifier.weight(1f)
                 )
                 Icon(

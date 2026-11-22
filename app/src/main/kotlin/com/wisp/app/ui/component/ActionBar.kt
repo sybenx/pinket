@@ -90,6 +90,11 @@ fun ActionBar(
     isPrivate: Boolean = false,
     zapEnabled: Boolean = true,
     onZapDisabledTap: () -> Unit = {},
+    /**
+     * The author takes Monero but has no lightning address: show the Monero mark,
+     * no amount, never the zapped color, and long-press does the same as tap.
+     */
+    moneroOnly: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -238,7 +243,12 @@ fun ActionBar(
                                 onZapDisabledTap()
                             }
                         },
-                        onLongClick = if (zapEnabled && onZapLongPress != null) {
+                        onLongClick = if (zapEnabled && moneroOnly) {
+                            {
+                                longPressFired.value = true
+                                onZap()
+                            }
+                        } else if (zapEnabled && onZapLongPress != null) {
                             {
                                 longPressFired.value = true
                                 onZapLongPress()
@@ -248,7 +258,7 @@ fun ActionBar(
             ) {
                 val zapTint = when {
                     !zapEnabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
-                    hasUserZapped -> WispThemeColors.zapColor
+                    hasUserZapped && !moneroOnly -> WispThemeColors.zapColor
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
                 if (isZapInProgress) {
@@ -259,6 +269,13 @@ fun ActionBar(
                         contentDescription = stringResource(R.string.cd_zaps),
                         tint = zapTint,
                         modifier = Modifier.size(22.dp)
+                    )
+                } else if (moneroOnly) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_monero),
+                        contentDescription = stringResource(R.string.cd_monero),
+                        tint = zapTint,
+                        modifier = Modifier.size(20.dp)
                     )
                 } else if (useZapBoltIcon) {
                     Icon(
@@ -288,7 +305,7 @@ fun ActionBar(
                 )
             }
         }
-        if (!isZapInProgress && zapSats > 0) {
+        if (!isZapInProgress && zapSats > 0 && !moneroOnly) {
             val context = LocalContext.current
             val fiatPrefs = remember { FiatPreferences.get(context) }
             fiatPrefs.fiatMode.collectAsState().value
