@@ -366,6 +366,7 @@ fun FeedScreen(
             onRepost = onRepost,
             onQuote = onQuote,
             onZap = { event -> zapTargetEvent = event },
+            moneroTips = true,
             onProfileClick = onProfileClick,
             onNoteClick = { eventId -> onQuotedNoteClick?.invoke(eventId) },
             onAddToList = onAddToList,

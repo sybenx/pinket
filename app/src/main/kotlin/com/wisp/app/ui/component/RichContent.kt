@@ -188,6 +188,11 @@ data class NoteActions(
     val resolvedEmojisProvider: () -> Map<String, String> = { emptyMap() },
     val unicodeEmojisProvider: () -> List<String> = { emptyList() },
     val onOpenEmojiLibrary: (() -> Unit)? = null,
+    /**
+     * [onZap] opens a send sheet that gets the author's pay options, so a quoted
+     * post's money button may show the Monero mark for a Monero-only author.
+     */
+    val moneroTips: Boolean = false,
 )
 
 data class MediaMeta(
@@ -1342,6 +1347,7 @@ fun QuotedNote(
                     hasUserReposted = hasUserReposted,
                     repostCount = repostCount,
                     onZap = { effectiveActions.onZap(event) },
+                    moneroTips = effectiveActions.moneroTips,
                     hasUserZapped = hasUserZapped,
                     likeCount = likeCount,
                     replyCount = replyCount,
