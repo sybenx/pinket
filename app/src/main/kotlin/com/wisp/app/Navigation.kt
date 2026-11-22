@@ -2559,7 +2559,8 @@ fun WispNavHost(
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
                     canPrivateZap = feedViewModel.hasLocalKeypair && articleUserHasDmRelays && articleRecipientHasDmRelays,
                     recipientPubkey = articleZapTarget?.pubkey,
-                    profileLookup = { feedViewModel.profileRepo.get(it) }
+                    profileLookup = { feedViewModel.profileRepo.get(it) },
+                    payOptions = rememberPayOptions(feedViewModel.eventRepo, zapRecipient)
                 )
             }
 
@@ -2580,6 +2581,7 @@ fun WispNavHost(
                         navController.navigate(Routes.COMPOSE)
                     },
                     onZap = { event -> articleZapTarget = event },
+                    moneroTips = true,
                     onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
                     onNoteClick = { eventId -> navController.navigate("thread/$eventId") },
                     onAddToList = { eventId -> addToListEventId = eventId },
