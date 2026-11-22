@@ -1234,7 +1234,8 @@ private fun MoneroNoWalletDialog(
                         Icon(
                             painter = painterResource(R.drawable.ic_monero),
                             contentDescription = null,
-                            tint = WispThemeColors.zapColor,
+                            // Neutral, like the code itself: the badge sits on white in every theme.
+                            tint = Color.Black,
                             modifier = Modifier.size(28.dp)
                         )
                     }
