@@ -692,7 +692,7 @@ fun UserProfileScreen(
                     isOwnProfile = isOwnProfile,
                     isFollowing = isFollowing,
                     onEditProfile = onEditProfile,
-                    onToggleFollow = { viewModel.toggleFollow(contactRepo, relayPool, signer) },
+                    onToggleFollow = { viewModel.toggleFollow() },
                     nip05Repo = nip05Repo,
                     pubkey = profilePubkey,
                     eventRepo = eventRepo,

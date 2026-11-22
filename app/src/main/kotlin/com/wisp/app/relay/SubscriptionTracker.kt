@@ -13,12 +13,18 @@ class SubscriptionTracker {
         const val SOFT_CAP = 20
         private val PRIORITY_PREFIXES = listOf(
             "dms", "notif", "feed", "self-data", "thread-", "user-engage", "extnet-",
-            "wallet-backup", "auto-check", "relay-backup", "grp-"
+            "wallet-backup", "auto-check", "relay-backup", "grp-",
+            // ListWriter's fetch of your newest list before a change: never skipped for capacity.
+            "listw-"
         )
     }
 
     fun track(relayUrl: String, subId: String) {
         relaySubs.getOrPut(relayUrl) { ConcurrentHashMap.newKeySet() }.add(subId)
+    }
+
+    fun untrack(relayUrl: String, subId: String) {
+        relaySubs[relayUrl]?.remove(subId)
     }
 
     fun untrackAll(subId: String) {

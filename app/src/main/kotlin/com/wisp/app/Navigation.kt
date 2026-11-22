@@ -231,6 +231,8 @@ fun WispNavHost(
     val splashViewModel: SplashViewModel = viewModel()
 
     relayViewModel.relayPool = feedViewModel.relayPool
+    relayViewModel.ownListStore = { feedViewModel.ownListStore }
+    onboardingViewModel.listWriter = feedViewModel.listWriter
 
     // Signer for the active account: LOCAL → LocalSigner; READ_ONLY (or signed out) → null.
     // Reactive: recomposes on login, logout, and account switch.
@@ -531,6 +533,12 @@ fun WispNavHost(
     LaunchedEffect(Unit) {
         feedViewModel.reactionSent.collect { HapticHelper.blip() }
     }
+    // List changes (follows, mutes, bookmarks, pins): one short toast when a change is refused or kept for later.
+    LaunchedEffect(Unit) {
+        feedViewModel.listWriter.messages.collect { resId ->
+            android.widget.Toast.makeText(context, context.getString(resId), android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
     LaunchedEffect(Unit) {
         feedViewModel.zapSuccess.collect { HapticHelper.zapBuzz() }
     }
@@ -584,11 +592,32 @@ fun WispNavHost(
             eventId = addToListEventId!!,
             bookmarkSets = ownSets,
             isBookmarked = addToListEventId!! in bookmarkedIds,
-            onToggleBookmark = { eventId -> feedViewModel.toggleBookmark(eventId) },
+            onToggleBookmark = { eventId -> feedViewModel.setBookmarked(eventId, wanted = eventId !in bookmarkedIds) },
             onAddToSet = { dTag, eventId -> feedViewModel.addNoteToBookmarkSet(dTag, eventId) },
             onRemoveFromSet = { dTag, eventId -> feedViewModel.removeNoteFromBookmarkSet(dTag, eventId) },
             onCreateSet = { name -> feedViewModel.createBookmarkSet(name) },
             onDismiss = { addToListEventId = null }
+        )
+    }
+
+    // "No follow list found": shown on any screen, only after ListWriter's check of your write relays found no
+    // follow list. "Follow anyway" starts one, still checked as a first list.
+    val pendingFirstFollow by feedViewModel.pendingFirstFollow.collectAsState()
+    val firstFollowCheckDone by feedViewModel.firstFollowCheckDone.collectAsState()
+    if (pendingFirstFollow != null && firstFollowCheckDone) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { feedViewModel.dismissFirstFollow() },
+            containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surface,
+            title = { androidx.compose.material3.Text("No follow list found") },
+            text = {
+                androidx.compose.material3.Text("No existing follow list was found on your relays. If you follow this person, your follow list will start at 1. If you believe this is wrong, rebroadcast your follow list from another client first, then try again.")
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { feedViewModel.confirmFirstFollow() }) { androidx.compose.material3.Text("Follow anyway") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { feedViewModel.dismissFirstFollow() }) { androidx.compose.material3.Text("Cancel") }
+            }
         )
     }
 
@@ -1163,6 +1192,8 @@ fun WispNavHost(
             val pubkey = backStackEntry.arguments?.getString("pubkey") ?: return@composable
             val isOwnProfile = pubkey == feedViewModel.getUserPubkey()
             val userProfileViewModel: UserProfileViewModel = viewModel()
+            userProfileViewModel.listWriter = feedViewModel.listWriter
+            userProfileViewModel.onFollowNeedsConfirm = { pk -> feedViewModel.askFirstFollow(pk) }
             // Started before the first frame, not after it: what is already in memory (name, bio,
             // who follows them) is then part of that frame, so the header does not grow under
             // the posts a moment later.
@@ -2766,7 +2797,8 @@ fun WispNavHost(
                 profileVersion = feedViewModel.eventRepo.profileVersion,
                 fetchProfile = { feedViewModel.forceProfileFetch(it) },
                 onBack = { navController.popBackStack() },
-                onChanged = { feedViewModel.updateMutedWords() },
+                onMutedWordChanged = { word, wanted -> feedViewModel.setMutedWord(word, wanted) },
+                onUserMuteChanged = { pubkey, wanted -> feedViewModel.setMuted(pubkey, wanted) },
                 safetyPrefs = feedViewModel.safetyPrefs,
                 cachedNetwork = feedViewModel.extendedNetworkRepo.cachedNetwork,
                 isNetworkReady = { feedViewModel.extendedNetworkRepo.isNetworkReady() },
@@ -3007,7 +3039,7 @@ fun WispNavHost(
                 },
                 onReact = { event, emoji -> feedViewModel.toggleReaction(event, emoji) },
                 onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
-                onRemoveBookmark = { eventId -> feedViewModel.removeBookmark(eventId) },
+                onRemoveBookmark = { eventId -> feedViewModel.setBookmarked(eventId, wanted = false) },
                 onToggleFollow = { pubkey -> feedViewModel.toggleFollow(pubkey) },
                 onBlockUser = { pubkey -> feedViewModel.blockUser(pubkey) },
                 translationRepo = feedViewModel.translationRepo,

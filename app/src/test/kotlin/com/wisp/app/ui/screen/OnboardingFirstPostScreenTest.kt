@@ -67,6 +67,8 @@ class OnboardingFirstPostScreenTest {
         }
         override suspend fun nip44Encrypt(plaintext: String, peerPubkeyHex: String): String = error("Unused")
         override suspend fun nip44Decrypt(ciphertext: String, peerPubkeyHex: String): String = error("Unused")
+        override suspend fun nip04Encrypt(plaintext: String, peerPubkeyHex: String): String = error("Unused")
+        override suspend fun nip04Decrypt(ciphertext: String, peerPubkeyHex: String): String = error("Unused")
     }
 
     @Before fun setup() {

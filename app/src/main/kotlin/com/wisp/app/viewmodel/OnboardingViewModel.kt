@@ -45,6 +45,12 @@ enum class SectionType { ACTIVE_NOW, CREATORS, NEWS }
 
 class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
     private val keyRepo = KeyRepository(app)
+
+    /**
+     * Set by Navigation (FeedViewModel.listWriter): the only allowed signer of the follow list. During onboarding the
+     * app wiring may still point at no account, so pass `account = openListAccount(app, signer)` per call.
+     */
+    var listWriter: ListWriter? = null
     private val blossomRepo = BlossomRepository(app)
 
     // Relay discovery state (background)
@@ -183,6 +189,8 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
 
             val relayTags = Nip65.buildRelayTags(relays)
             val relayListEvent = s.signEvent(kind = 10002, content = "", tags = relayTags)
+            // List writes use the relay list from the own-list store: give it this one at once.
+            try { openOwnListStore(getApplication(), s.pubkeyHex).seen(relayListEvent) } catch (_: Exception) {}
             val relayListMsg = ClientMessage.event(relayListEvent)
             relayPool.sendToWriteRelays(relayListMsg)
             for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
@@ -391,8 +399,12 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Finish onboarding: publish kind 3 follow list (if any selected), mark complete.
-     * Suspend so contactRepo is updated before Navigation proceeds to feed.
+     * Finish onboarding: mark it complete at once, then add the chosen people (and you) to your follow list through
+     * ListWriter, in the background. Never blocks or fails the step: a write that can't go out now is kept and sent
+     * later. The follows show at once through ListWriter's pending overlay on [contactRepo].
+     *
+     * For a key made on this device there is no list anywhere yet, so this starts the first one. For an existing key
+     * that lands here, the chosen people are added to the list it already has; nothing else in it changes.
      */
     suspend fun finishOnboarding(
         relayPool: RelayPool,
@@ -400,27 +412,15 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         selectedPubkeys: Set<String>,
         signer: NostrSigner? = null
     ) {
-        val s = signer ?: keyRepo.getKeypair()?.let { LocalSigner(it.privkey, it.pubkey) } ?: return
-        val myPubkey = s.pubkeyHex
-
-        val allFollows = selectedPubkeys + myPubkey
-
-        var follows = contactRepo.getFollowList()
-        for (pubkey in allFollows) {
-            follows = Nip02.addFollow(follows, pubkey)
-        }
-        val tags = Nip02.buildFollowTags(follows)
-        val event = s.signEvent(kind = 3, content = "", tags = tags)
-        contactRepo.updateFromEvent(event)
         keyRepo.markOnboardingComplete()
-
-        // Fire-and-forget relay publishing
+        val s = signer ?: keyRepo.getKeypair()?.let { LocalSigner(it.privkey, it.pubkey) } ?: return
+        val w = listWriter ?: return
+        val entries = (selectedPubkeys + s.pubkeyHex).map { listOf("p", it) }
+        val account = openListAccount(getApplication(), s)
         viewModelScope.launch {
-            val msg = ClientMessage.event(event)
-            relayPool.sendToWriteRelays(msg)
-            for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
-                relayPool.sendToRelayOrEphemeral(url, msg)
-            }
+            // The user chose these follows in onboarding: that is the confirmation a first follow list needs.
+            val result = w.setMany(3, entries, wanted = true, confirmFirstList = true, account = account)
+            Log.d("Onboarding", "follow list: $result")
         }
     }
 }

@@ -59,6 +59,13 @@ private fun ProfileSortMode.relaySlug() = when (this) {
 class UserProfileViewModel(app: Application) : AndroidViewModel(app) {
     private val keyRepo = KeyRepository(app)
 
+    /** Set by Navigation (FeedViewModel.listWriter): the only allowed signer of the follow list. */
+    var listWriter: ListWriter? = null
+
+    /** Set by Navigation: opens the "No follow list found" dialog for a follow refused with NEEDS_CONFIRM. */
+    var onFollowNeedsConfirm: ((String) -> Unit)? = null
+    private var followStateJob: Job? = null
+
     private val _profile = MutableStateFlow<ProfileData?>(null)
     val profile: StateFlow<ProfileData?> = _profile
 
@@ -223,6 +230,11 @@ class UserProfileViewModel(app: Application) : AndroidViewModel(app) {
         _profile.value = eventRepo.getProfileData(pubkey)
         _relayHints.value = relayHintStore?.getHints(pubkey) ?: emptySet()
         _isFollowing.value = contactRepo.isFollowing(pubkey)
+        // Follows as shown (pending changes included), so the button follows the list and ListWriter's overlay.
+        followStateJob?.cancel()
+        followStateJob = viewModelScope.launch {
+            contactRepo.followList.collect { if (targetPubkey == pubkey) _isFollowing.value = contactRepo.isFollowing(pubkey) }
+        }
         localPublicationJob?.cancel()
         localPublicationJob = viewModelScope.launch {
             var localIds = emptySet<String>()
@@ -804,25 +816,23 @@ class UserProfileViewModel(app: Application) : AndroidViewModel(app) {
         subscribeEngagementForProfile(pool)
     }
 
-    fun toggleFollow(
-        contactRepo: ContactRepository,
-        relayPool: RelayPool,
-        signer: NostrSigner? = null
-    ) {
-        val s = signer ?: keyRepo.getKeypair()?.let { LocalSigner(it.privkey, it.pubkey) } ?: return
-        val currentList = contactRepo.getFollowList()
-        val newList = if (contactRepo.isFollowing(targetPubkey)) {
-            Nip02.removeFollow(currentList, targetPubkey)
-        } else {
-            Nip02.addFollow(currentList, targetPubkey)
-        }
-
-        val tags = Nip02.buildFollowTags(newList)
-        viewModelScope.launch {
-            val event = s.signEvent(kind = 3, content = "", tags = tags)
-            relayPool.sendToWriteRelays(ClientMessage.event(event))
-            contactRepo.updateFromEvent(event)
-            _isFollowing.value = contactRepo.isFollowing(targetPubkey)
+    /**
+     * The profile's Follow button. The wanted state is the opposite of what the button showed at tap time; only that
+     * one `p` entry changes, through ListWriter. With no follow list anywhere, [onFollowNeedsConfirm] opens the
+     * "No follow list found" dialog.
+     */
+    fun toggleFollow() {
+        val w = listWriter ?: return
+        val target = targetPubkey
+        if (target.isEmpty()) return
+        val wanted = !_isFollowing.value
+        _isFollowing.value = wanted
+        w.submit(3, listOf("p", target), wanted) { r ->
+            if (r is ListResult.Refused) {
+                // Refused: the button flips back.
+                if (targetPubkey == target) _isFollowing.value = !wanted
+                if (r.reason == ListResult.Reason.NEEDS_CONFIRM) onFollowNeedsConfirm?.invoke(target)
+            }
         }
     }
 }

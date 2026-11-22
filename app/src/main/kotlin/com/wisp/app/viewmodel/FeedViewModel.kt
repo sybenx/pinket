@@ -134,6 +134,14 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         signer = s
         zapSender.signer = s
         registerAuthSigner()
+        listWriter.refreshOverlay()
+        // A mute list loaded while no signer was set has its private part unread: read it now.
+        val mutes = ownListStore?.latest(com.wisp.app.nostr.Nip51.KIND_MUTE_LIST)
+        if (mutes != null && mutes.pubkey.equals(s.pubkeyHex, ignoreCase = true)) {
+            viewModelScope.launch {
+                if (getUserPubkey()?.equals(mutes.pubkey, ignoreCase = true) == true) muteRepo.loadFromEvent(mutes, s)
+            }
+        }
     }
 
     fun clearSigner() {
@@ -236,6 +244,8 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
             feedSub.subscribeFeed(refresh = refreshFeed)
             val myPubkey = getUserPubkey()
             if (myPubkey != null) startup.subscribeDmsAndNotifications(myPubkey)
+            // Re-send unconfirmed list versions and replay list changes kept while offline.
+            listWriter.resume()
             if (force) {
                 startup.fetchRelayListsForFollows()
                 // After a long pause, NIP-51 lists (bookmarks, hashtag sets, media servers, etc.)
@@ -327,16 +337,74 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         getFeedSubId = { feedSub.feedSubId },
         getRelayFeedSubId = { feedSub.relayFeedSubId },
         getIsTrendingFeed = { feedSub.feedType.value == FeedType.TRENDING },
-        onRelayFeedEventReceived = { feedSub.onRelayFeedEventReceived() }
+        onRelayFeedEventReceived = { feedSub.onRelayFeedEventReceived() },
+        getOwnListStore = { ownListStore }
     )
+
+    /**
+     * The active account's own-list store: the newest version of each own list this device has seen, pending list
+     * changes and unconfirmed signed versions. Re-opened on account switch.
+     */
+    @Volatile
+    var ownListStore: com.wisp.app.repo.OwnListStore? = pubkeyHex?.let { openOwnListStore(app, it) }
+        private set
+
+    /** The active account for list writes: its signer and store, never during an account switch. */
+    private fun listAccount(): ListAccount? {
+        if (_accountSwitching.value) return null
+        val s = signer ?: return null
+        val store = ownListStore ?: return null
+        if (s.pubkeyHex.lowercase() != store.pubkeyHex) return null
+        return ListAccount(s, store)
+    }
+
+    /** The only place that signs follows, mutes, bookmarks and pins (and the automatic DM relay list). */
+    val listWriter: ListWriter = ListWriter(
+        source = RelayListSource(relayPool),
+        sink = RelayListSink(relayPool),
+        account = { listAccount() },
+        activePubkey = { getUserPubkey() },
+        poolWriteRelays = { relayPool.getWriteRelayUrls() },
+        scope = accountScope,
+        project = { eventRouter.applyOwnList(it) }
+    )
+
+    init {
+        // Buttons show pending list changes at once (the projections still change only from a signed version).
+        val bookmarkPrefix = ListWriter.overlayKey(com.wisp.app.nostr.Nip51.KIND_BOOKMARK_LIST, null, listOf("e", ""))!!
+        val followPrefix = ListWriter.overlayKey(3, null, listOf("p", ""))!!
+        val mutePrefix = ListWriter.overlayKey(com.wisp.app.nostr.Nip51.KIND_MUTE_LIST, null, listOf("p", ""))!!
+        val mutedWordPrefix = ListWriter.overlayKey(com.wisp.app.nostr.Nip51.KIND_MUTE_LIST, null, listOf("word", ""))!!
+        val pinPrefix = ListWriter.overlayKey(com.wisp.app.nostr.Nip51.KIND_PIN_LIST, null, listOf("e", ""))!!
+        fun Map<String, Boolean>.under(prefix: String): Map<String, Boolean> =
+            filterKeys { it.startsWith(prefix) }.mapKeys { it.key.substring(prefix.length) }
+        viewModelScope.launch {
+            listWriter.overlay.collect { overlay ->
+                bookmarkRepo.setPending(overlay.under(bookmarkPrefix))
+                contactRepo.setPending(overlay.under(followPrefix))
+                muteRepo.setPending(overlay.under(mutePrefix), overlay.under(mutedWordPrefix))
+                pinRepo.setPending(overlay.under(pinPrefix))
+            }
+        }
+    }
 
     val socialActions: SocialActionManager = SocialActionManager(
         relayPool, outboxRouter, eventRepo, contactRepo, muteRepo, notifRepo, dmRepo,
         pinRepo, deletedEventsRepo, { activeWalletProvider }, customEmojiRepo, zapSender, powPrefs, interfacePrefs,
         relayListRepo, accountScope,
         getSigner = { signer },
-        getUserPubkey = { getUserPubkey() }
+        getUserPubkey = { getUserPubkey() },
+        listWriter = listWriter
     )
+
+    init {
+        // A kept follow, replayed later, found that you have no follow list yet: ask now ("Follow anyway").
+        viewModelScope.launch {
+            listWriter.needsConfirm.collect { entries ->
+                socialActions.askFirstFollow(entries.filter { it.firstOrNull() == "p" }.mapNotNull { it.getOrNull(1) })
+            }
+        }
+    }
 
     val listCrud: ListCrudManager = ListCrudManager(
         relayPool, subManager, eventRepo, listRepo, interestRepo, bookmarkSetRepo, customEmojiRepo,
@@ -355,7 +423,8 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         getUserPubkey = { getUserPubkey() },
         registerAuthSigner = { registerAuthSigner() },
         fetchEmojiSets = { listCrud.fetchEmojiSets() },
-        getSigner = { signer }
+        getSigner = { signer },
+        getListWriter = { listWriter }
     )
 
     // -- Exposed state --
@@ -459,6 +528,9 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     }
     private fun resetForAccountSwitch(clearPersisted: Boolean) {
         stopPublications()
+        // Logging out drops this account's kept list versions and pending changes (not what it has ever seen).
+        if (clearPersisted) ownListStore?.clear()
+        ownListStore = null
         startup.resetForAccountSwitch(clearPersisted)
         groupRepo.clear()
         liveStreamRepo.clear()
@@ -481,6 +553,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     fun reloadForNewAccount(resumePublications: Boolean = true) {
         if (!resumePublications || eventRepo.notePublisher?.accountPubkey != getUserPubkey()) stopPublications()
         safetyPrefs.reload(getUserPubkey())
+        ownListStore = getUserPubkey()?.let { openOwnListStore(getApplication(), it) }
         startup.reloadForNewAccount()
         groupRepo.reload(getUserPubkey())
         val pk = getUserPubkey()
@@ -488,6 +561,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
             getApplication<Application>().getSharedPreferences("relay_auth_prefs_$pk", Context.MODE_PRIVATE)
         )
         accountScope.start()
+        listWriter.refreshOverlay()
         if (resumePublications) startPublications()
     }
 
@@ -591,12 +665,15 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // -- Social action delegates --
+    // List writes (follows, mutes, bookmarks, pins) all go through ListWriter with the state the user wants. The
+    // toggle* helpers take that state from what the button shows at tap time (pending changes included).
     fun toggleFollow(pubkey: String) = socialActions.toggleFollow(pubkey)
     fun confirmFirstFollow() = socialActions.confirmFirstFollow()
     fun dismissFirstFollow() = socialActions.dismissFirstFollow()
+    /** Open the "No follow list found" dialog (another screen's follow was refused with NEEDS_CONFIRM). */
+    fun askFirstFollow(pubkey: String) = socialActions.askFirstFollow(listOf(pubkey))
     fun blockUser(pubkey: String) = socialActions.blockUser(pubkey)
     fun unblockUser(pubkey: String) = socialActions.unblockUser(pubkey)
-    fun updateMutedWords() = socialActions.updateMutedWords()
     fun sendRepost(event: NostrEvent) = socialActions.sendRepost(event)
     fun sendReaction(event: NostrEvent, content: String = "+") = socialActions.toggleReaction(event, content)
     fun toggleReaction(event: NostrEvent, emoji: String) = socialActions.toggleReaction(event, emoji)
@@ -604,6 +681,34 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     fun togglePin(eventId: String) = socialActions.togglePin(eventId)
     fun deleteEvent(eventId: String, kind: Int) = socialActions.deleteEvent(eventId, kind)
     fun followAll(pubkeys: Set<String>) = socialActions.followAll(pubkeys)
+
+    // -- List writes through ListWriter (the state the user wants, captured at tap time; never a toggle) --
+    /** Pending wanted states (ListWriter.overlayKey -> wanted). Overlay on the repositories so buttons flip at once. */
+    val listOverlay: StateFlow<Map<String, Boolean>> get() = listWriter.overlay
+    /** The pending wanted state of one entry, or null when nothing is pending for it. */
+    fun listWanted(kind: Int, entry: List<String>, d: String? = null): Boolean? = listWriter.wanted(kind, d, entry)
+    /** Follow or unfollow. When there is no follow list anywhere, the "No follow list found" dialog asks first. */
+    fun setFollowing(pubkey: String, wanted: Boolean, onResult: (ListResult) -> Unit = {}) =
+        socialActions.setFollowing(pubkey, wanted, onResult)
+    /** Follow several people in one write (follow all). */
+    fun followMany(pubkeys: Collection<String>, onResult: (ListResult) -> Unit = {}) =
+        socialActions.followAll(pubkeys, onResult)
+    /** Mute or unmute a person: hidden or shown here at once; the mute list write is separate (a new mute goes private). */
+    fun setMuted(pubkey: String, wanted: Boolean, onResult: (ListResult) -> Unit = {}) =
+        socialActions.setUserMuted(pubkey, wanted, onResult)
+    /** Mute or unmute a word. Removal matches any spelling of it (case-insensitive), wherever it is stored. */
+    fun setMutedWord(word: String, wanted: Boolean, onResult: (ListResult) -> Unit = {}) =
+        socialActions.setMutedWord(word, wanted, onResult)
+    /**
+     * Bookmark or unbookmark a note (a new one is a public `e` tag with a relay hint when one is known). [wanted] is
+     * the state the user asked for, from what the button showed at tap time. Every other entry, tag and the private
+     * part stay as they are.
+     */
+    fun setBookmarked(eventId: String, wanted: Boolean, onResult: (ListResult) -> Unit = {}) =
+        listWriter.submit(com.wisp.app.nostr.Nip51.KIND_BOOKMARK_LIST, socialActions.eTagFor(eventId), wanted, onResult = onResult)
+    /** Pin or unpin a note on the profile. */
+    fun setPinned(eventId: String, wanted: Boolean, onResult: (ListResult) -> Unit = {}) =
+        socialActions.setPinned(eventId, wanted, onResult)
     fun muteThread(rootEventId: String) = socialActions.muteThread(rootEventId)
     fun publishPollVote(pollEventId: String, optionIds: List<String>) = socialActions.publishPollVote(pollEventId, optionIds)
     fun sendZapPollVote(pollEvent: NostrEvent, optionIndex: Int, amountMsats: Long, message: String = "", isAnonymous: Boolean = false) =
@@ -655,41 +760,6 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun toggleBookmark(eventId: String) {
-        val s = signer ?: return
-        if (bookmarkRepo.isBookmarked(eventId)) {
-            bookmarkRepo.removeBookmark(eventId)
-        } else {
-            bookmarkRepo.addBookmark(eventId)
-        }
-        publishBookmarkList(s)
-    }
-
-    fun removeBookmark(eventId: String) {
-        val s = signer ?: return
-        bookmarkRepo.removeBookmark(eventId)
-        publishBookmarkList(s)
-    }
-
-    private fun publishBookmarkList(s: com.wisp.app.nostr.NostrSigner) {
-        val ids = bookmarkRepo.getBookmarkedIds()
-        val hints = eventRepo.getRelayHintsForEvents(ids)
-        val tags = com.wisp.app.nostr.Nip51.buildBookmarkListTags(
-            ids,
-            bookmarkRepo.getCoordinates(),
-            bookmarkRepo.getHashtags(),
-            relayHints = hints
-        )
-        accountScope.launch {
-            val event = s.signEvent(
-                kind = com.wisp.app.nostr.Nip51.KIND_BOOKMARK_LIST,
-                content = "",
-                tags = tags
-            )
-            eventRepo.cacheEvent(event)
-            relayPool.sendToWriteRelays(com.wisp.app.nostr.ClientMessage.event(event))
-        }
-    }
     fun createEmojiSet(name: String, emojis: List<com.wisp.app.nostr.CustomEmoji>) = listCrud.createEmojiSet(name, emojis)
     fun updateEmojiSet(dTag: String, title: String, emojis: List<com.wisp.app.nostr.CustomEmoji>) = listCrud.updateEmojiSet(dTag, title, emojis)
     fun deleteEmojiSet(dTag: String) = listCrud.deleteEmojiSet(dTag)

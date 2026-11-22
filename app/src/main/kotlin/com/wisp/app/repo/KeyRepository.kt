@@ -360,6 +360,18 @@ class KeyRepository(private val context: Context) {
 
     fun getDmRelays(): List<String> = _dmRelays.value
 
+    /**
+     * The start-up check found no DM relay list for [pubkeyHex] once already and the defaults are in use (only in
+     * memory, never saved as your list): later start-ups skip the wait for one.
+     */
+    fun isDmDefaultsInUse(pubkeyHex: String): Boolean =
+        prefs.getBoolean("dm_defaults_in_use_${pubkeyHex.lowercase()}", false)
+
+    fun setDmDefaultsInUse(pubkeyHex: String, inUse: Boolean) {
+        val k = "dm_defaults_in_use_${pubkeyHex.lowercase()}"
+        if (inUse) prefs.edit().putBoolean(k, true).apply() else prefs.edit().remove(k).apply()
+    }
+
     private fun loadDmRelays(): List<String> {
         val str = prefs.getString("dm_relays", null) ?: return emptyList()
         return try { json.decodeFromString(str) } catch (_: Exception) { emptyList() }

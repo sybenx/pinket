@@ -55,6 +55,8 @@ class PowManagerTest {
         }
         override suspend fun nip44Encrypt(plaintext: String, peerPubkeyHex: String): String = error("Unused")
         override suspend fun nip44Decrypt(ciphertext: String, peerPubkeyHex: String): String = error("Unused")
+        override suspend fun nip04Encrypt(plaintext: String, peerPubkeyHex: String): String = error("Unused")
+        override suspend fun nip04Decrypt(ciphertext: String, peerPubkeyHex: String): String = error("Unused")
     }
 
     @Test fun `login rebinds mining without recreating the manager`() = runTest {

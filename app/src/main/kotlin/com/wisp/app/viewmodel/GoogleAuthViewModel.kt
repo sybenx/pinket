@@ -255,6 +255,8 @@ class GoogleAuthViewModel(app: Application) : AndroidViewModel(app) {
         uploadWithRefresh(activity, payload)
         keyRepo.saveKeypair(keypair)
         keyRepo.reloadPrefs(keypair.pubkey.toHex())
+        // A key made on this device: it has no lists anywhere yet, so first lists need no fetch.
+        com.wisp.app.repo.OwnListStore.open(getApplication(), keypair.pubkey.toHex()).markNewAccount()
         val fiatPrefs = FiatPreferences.get(getApplication())
         fiatPrefs.setFiatMode(true)
         fiatPrefs.setCurrency("USD")

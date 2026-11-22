@@ -102,7 +102,9 @@ class StartupCoordinator(
     private val getUserPubkey: () -> String?,
     private val registerAuthSigner: () -> Unit,
     private val fetchEmojiSets: () -> Unit,
-    private val getSigner: () -> NostrSigner?
+    private val getSigner: () -> NostrSigner?,
+    /** The only allowed signer of list kinds (here: the automatic DM relay list). */
+    private val getListWriter: () -> ListWriter? = { null }
 ) {
     private var eventProcessingJob: Job? = null
     private var metadataSweepJob: Job? = null
@@ -585,7 +587,7 @@ class StartupCoordinator(
         }
 
         // Wait for relays to EOSE so we get the newest kind 3 (follow list).
-        // contactRepo.updateFromEvent already keeps the newest by created_at, so collecting
+        // The own-list store keeps the newest by created_at (contactRepo loads only that), so collecting
         // from several relays ensures we don't proceed with a stale follow list from
         // a single fast relay.
         val eoseCount = subManager.awaitEoseCount("self-data", expectedCount = selfDataRelays.size, timeoutMs = 4_000)
@@ -601,6 +603,8 @@ class StartupCoordinator(
         }
 
         val gotFollowList = contactRepo.getFollowList().isNotEmpty()
+        // Own lists are known now: re-send unconfirmed versions and replay changes kept while offline.
+        getListWriter()?.resume()
         Log.d("StartupCoord", "subscribeSelfData: eoseCount=$eoseCount")
         Log.d("StartupCoord", "subscribeSelfData: gotFollowList=$gotFollowList, follows=${contactRepo.getFollowList().size}")
 
@@ -681,6 +685,13 @@ class StartupCoordinator(
             return
         }
 
+        // An earlier start-up already found none: use the defaults at once, no 8 s wait (a list that turns up
+        // later still wins through EventRouter).
+        if (keyRepo.isDmDefaultsInUse(myPubkey)) {
+            useDefaultDmRelays(myPubkey, waited = false)
+            return
+        }
+
         // The kind 10050 event may still be buffered in EventRouter's processing loop
         // even though EOSE arrived. Also query the user's write relays as a fallback
         // source — indexer relays may not have the latest kind 10050.
@@ -713,23 +724,31 @@ class StartupCoordinator(
             return
         }
 
-        val defaults = RelayConfig.DEFAULT_DM_RELAYS
-        keyRepo.saveDmRelays(defaults)
-        relayPool.updateDmRelays(defaults)
-        Log.d("StartupCoord", "Applied default DM relays: $defaults")
+        // Listen on the defaults in memory. They are published, and saved here, only as a first list: when no
+        // DM relay list exists anywhere (never seen on this device, none found on your write relays). A list
+        // that exists but did not load is never overwritten.
+        useDefaultDmRelays(myPubkey, waited = true)
+    }
 
-        // Publish kind 10050 so other clients and relays know our DM relays
-        val s = getSigner() ?: return
+    private fun useDefaultDmRelays(myPubkey: String, waited: Boolean) {
+        val defaults = RelayConfig.DEFAULT_DM_RELAYS
+        relayPool.updateDmRelays(defaults)
+        Log.d("StartupCoord", "Using default DM relays in memory: $defaults (waited: $waited)")
+        // Remembered per account, also for read-only accounts, so the next start-up does not wait again.
+        if (waited) keyRepo.setDmDefaultsInUse(myPubkey, true)
+
+        val writer = getListWriter() ?: return
         scope.launch {
-            val tags = Nip51.buildRelaySetTags(defaults)
-            val event = s.signEvent(kind = Nip51.KIND_DM_RELAYS, content = "", tags = tags)
-            val msg = ClientMessage.event(event)
-            relayPool.sendToWriteRelays(msg)
-            relayPool.sendToDmRelays(msg)
-            for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
-                relayPool.sendToRelayOrEphemeral(url, msg)
+            val result = writer.createIfMissing(
+                Nip51.KIND_DM_RELAYS,
+                defaults.map { listOf("relay", it) },
+                extraRelays = defaults
+            )
+            Log.d("StartupCoord", "Default DM relay list: $result")
+            if (result is ListResult.Sent && keyRepo.getDmRelays().isEmpty()) {
+                keyRepo.saveDmRelays(defaults)
+                keyRepo.setDmDefaultsInUse(myPubkey, false)
             }
-            Log.d("StartupCoord", "Published default DM relay list (kind ${Nip51.KIND_DM_RELAYS})")
         }
     }
 

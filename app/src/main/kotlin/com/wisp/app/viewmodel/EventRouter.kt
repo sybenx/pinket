@@ -35,6 +35,7 @@ import com.wisp.app.repo.KeyRepository
 import com.wisp.app.repo.ListRepository
 import com.wisp.app.repo.MetadataFetcher
 import com.wisp.app.repo.MuteRepository
+import com.wisp.app.repo.OwnListStore
 import com.wisp.app.repo.NotificationRepository
 import com.wisp.app.repo.PinRepository
 import com.wisp.app.repo.DiagnosticLogger
@@ -78,7 +79,9 @@ class EventRouter(
     private val getFeedSubId: () -> String,
     private val getRelayFeedSubId: () -> String,
     private val getIsTrendingFeed: () -> Boolean,
-    private val onRelayFeedEventReceived: () -> Unit
+    private val onRelayFeedEventReceived: () -> Unit,
+    /** The active account's own-list store (null before an account is loaded). */
+    private val getOwnListStore: () -> OwnListStore? = { null }
 ) {
     /**
      * IDs of the user's own recent events used to build the notif-replies-etag subscription.
@@ -114,7 +117,44 @@ class EventRouter(
         event.kind == 1 && !eventRepo.isPrivate(event.id) &&
             Nip22.isStrayKind1OnComment(event) { id -> eventRepo.getEvent(id)?.kind }
 
+    /**
+     * Offer an event to the own-list store first, before any repository sees it. Returns null when it is not one of
+     * your own list events (or no store is loaded), else whether the store took it as your newest version.
+     */
+    private fun feedOwnList(event: NostrEvent): Boolean? {
+        val store = getOwnListStore() ?: return null
+        // Only the list kinds that ListWriter writes or reads (others are not kept: the store is one prefs file).
+        if (event.kind !in OwnListStore.STORED_KINDS) return null
+        if (OwnListStore.keyOrNull(event) == null) return null
+        if (event.pubkey.lowercase() != store.pubkeyHex) return null
+        return store.seen(event)
+    }
+
+    /**
+     * Load one of your own list versions into its repository (follows, mutes, bookmarks, pins). Called for a version
+     * the own-list store took as newest: from relays here, and from ListWriter after it signs.
+     */
+    suspend fun applyOwnList(event: NostrEvent) {
+        val myPubkey = getUserPubkey() ?: return
+        if (event.pubkey != myPubkey) return
+        when (event.kind) {
+            3 -> contactRepo.loadFromEvent(event)
+            Nip51.KIND_MUTE_LIST -> {
+                val s = getSigner()
+                if (s != null) muteRepo.loadFromEvent(event, s) else muteRepo.loadFromEvent(event)
+            }
+            Nip51.KIND_BOOKMARK_LIST -> {
+                val s = getSigner()
+                if (s != null) bookmarkRepo.loadFromEvent(event, s) else bookmarkRepo.loadFromEvent(event)
+            }
+            Nip51.KIND_PIN_LIST -> pinRepo.loadFromEvent(event)
+        }
+    }
+
     suspend fun processRelayEvent(event: NostrEvent, relayUrl: String, subscriptionId: String) {
+        // Own lists: the store decides what is newest; the repositories load only what it took.
+        val ownList = feedOwnList(event)
+        if (ownList == true && event.kind in PROJECTED_KINDS) applyOwnList(event)
         if (event.kind == Nip88.KIND_POLL_RESPONSE) {
             Log.d("POLL", "[EventRouter] received kind 1018 id=${event.id.take(12)} sub=$subscriptionId relay=$relayUrl")
         }
@@ -432,21 +472,18 @@ class EventRouter(
                     relayPool.updateBlockedUrls(urls)
                 }
             }
-            if (event.kind == Nip51.KIND_MUTE_LIST) {
+            if (event.kind == Nip51.KIND_MUTE_LIST && ownList == null) {
                 val myPubkey = getUserPubkey()
                 val s = getSigner()
-                if (myPubkey != null && event.pubkey == myPubkey) {
-                    if (s != null) muteRepo.loadFromEvent(event, s)
-                    else muteRepo.loadFromEvent(event)
-                }
+                if (myPubkey != null && event.pubkey == myPubkey) muteRepo.loadFromEventIfNewer(event, s)
             }
-            if (event.kind == Nip51.KIND_BOOKMARK_LIST) {
+            if (event.kind == Nip51.KIND_BOOKMARK_LIST && ownList == null) {
                 val myPubkey = getUserPubkey()
-                if (myPubkey != null && event.pubkey == myPubkey) bookmarkRepo.loadFromEvent(event)
+                if (myPubkey != null && event.pubkey == myPubkey) bookmarkRepo.loadFromEventIfNewer(event)
             }
-            if (event.kind == Nip51.KIND_PIN_LIST) {
+            if (event.kind == Nip51.KIND_PIN_LIST && ownList == null) {
                 val myPubkey = getUserPubkey()
-                if (myPubkey != null && event.pubkey == myPubkey) pinRepo.loadFromEvent(event)
+                if (myPubkey != null && event.pubkey == myPubkey) pinRepo.loadFromEventIfNewer(event)
             }
             if (event.kind == Blossom.KIND_SERVER_LIST) {
                 val myPubkey = getUserPubkey()
@@ -600,14 +637,17 @@ class EventRouter(
                 if (event.kind == 30315) eventRepo.addEvent(event)
             }
             // Always handle follow list updates (from self-data subscription)
-            if (event.kind == 3) {
+            if (event.kind == 3 && ownList == null) {
                 val myPubkey = getUserPubkey()
-                if (myPubkey != null && event.pubkey == myPubkey) contactRepo.updateFromEvent(event)
+                if (myPubkey != null && event.pubkey == myPubkey) contactRepo.loadFromEventIfNewer(event)
             }
         }
     }
 
     companion object {
+        /** Own list kinds whose repositories load through [applyOwnList] once the own-list store takes a version. */
+        val PROJECTED_KINDS = setOf(3, Nip51.KIND_MUTE_LIST, Nip51.KIND_BOOKMARK_LIST, Nip51.KIND_PIN_LIST)
+
         private val SELF_DATA_KINDS = intArrayOf(
             0, 3, 5, 10002, 10050, 10007, 10006,
             Nip51.KIND_MUTE_LIST, Nip51.KIND_SIMPLE_GROUPS, Nip51.KIND_BOOKMARK_LIST,

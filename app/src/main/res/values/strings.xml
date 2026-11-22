@@ -983,4 +983,9 @@
     <string name="trending_relay_save">Save</string>
     <string name="trending_relay_saved">Trending relay saved</string>
     <string name="trending_relay_invalid">Enter a wss:// relay URL</string>
+    <!-- List changes (follows, mutes, bookmarks, pins) -->
+    <string name="list_not_found">Couldn\'t find your current list. Try again in a moment.</string>
+    <string name="list_change_blocked">Not saved. It would have changed more than you asked.</string>
+    <string name="list_not_sent">Not connected. Nothing was changed.</string>
+    <string name="list_will_save">Will save when you are back online.</string>
 </resources>

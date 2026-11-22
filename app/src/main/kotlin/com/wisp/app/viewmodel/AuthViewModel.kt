@@ -50,6 +50,8 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
             val keypair = Keys.generate()
             keyRepo.saveKeypair(keypair)
             keyRepo.reloadPrefs(keypair.pubkey.toHex())
+            // A key made on this device: it has no lists anywhere yet, so first lists need no fetch.
+            com.wisp.app.repo.OwnListStore.open(getApplication(), keypair.pubkey.toHex()).markNewAccount()
             _npub.value = Nip19.npubEncode(keypair.pubkey)
             _signingMode.value = SigningMode.LOCAL
             _error.value = null

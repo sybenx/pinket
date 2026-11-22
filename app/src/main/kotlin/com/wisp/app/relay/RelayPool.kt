@@ -27,6 +27,7 @@ import okhttp3.OkHttpClient
 import java.util.concurrent.CopyOnWriteArrayList
 
 data class RelayEvent(val event: NostrEvent, val relayUrl: String, val subscriptionId: String)
+data class RelayEose(val relayUrl: String, val subscriptionId: String)
 data class BroadcastState(val accepted: Int, val sent: Int, val finished: Boolean, val rejected: Int)
 
 class RelayPool(private var prefs: SharedPreferences? = null) {
@@ -254,6 +255,10 @@ class RelayPool(private var prefs: SharedPreferences? = null) {
 
     private val _eoseSignals = MutableSharedFlow<String>(extraBufferCapacity = 64)
     val eoseSignals: SharedFlow<String> = _eoseSignals
+
+    /** EOSE with the relay that sent it (ListWriter counts answers per relay). */
+    private val _relayEoses = MutableSharedFlow<RelayEose>(extraBufferCapacity = 256)
+    val relayEoses: SharedFlow<RelayEose> = _relayEoses
 
     /** Retraction stream for already-delivered invalid events. Verification now precedes delivery,
      * so rejected network payloads MUST NOT emit here: a forged ID could retract a valid event. */
@@ -501,6 +506,7 @@ class RelayPool(private var prefs: SharedPreferences? = null) {
                         val elapsed = subStartTimes[msg.subscriptionId]?.let { System.currentTimeMillis() - it } ?: -1L
                         Log.d("SUBLOG", "EOSE sub=${msg.subscriptionId} relay=${relay.config.url}: $count events in ${elapsed}ms")
                         _eoseSignals.tryEmit(msg.subscriptionId)
+                        _relayEoses.tryEmit(RelayEose(relay.config.url, msg.subscriptionId))
                         unsupportedCounts.remove(relay.config.url) // Relay works, clear counter
                     }
                     is RelayMessage.Ok -> {
@@ -1218,6 +1224,19 @@ class RelayPool(private var prefs: SharedPreferences? = null) {
         for (relay in ephemeralRelays.values) relay.send(msg)
     }
 
+    /** Close one subscription on one relay and forget it there (no re-send on reconnect). */
+    fun closeOnRelay(url: String, subscriptionId: String) {
+        subscriptionTracker.untrack(url, subscriptionId)
+        activeSubscriptions[url]?.remove(subscriptionId)
+        relayIndex[url]?.send(ClientMessage.close(subscriptionId), queueIfDisconnected = false)
+    }
+
+    /** Drop the per-subscription log counters once a subscription is closed everywhere. */
+    fun forgetSubscriptionStats(subscriptionId: String) {
+        subEventCounts.remove(subscriptionId)
+        subStartTimes.remove(subscriptionId)
+    }
+
     fun cleanupEphemeralRelays() {
         val now = System.currentTimeMillis()
         val stale = ephemeralLastUsed.filter { now - it.value > 5 * 60 * 1000 }.keys
@@ -1290,6 +1309,9 @@ class RelayPool(private var prefs: SharedPreferences? = null) {
     }
 
     fun isRelayConnected(url: String): Boolean = relayIndex[url]?.isConnected == true
+
+    /** A relay this pool already has a connection object for (connected or not). */
+    fun isKnownRelay(url: String): Boolean = relayIndex.containsKey(url)
 
     /** Clear cooldown for a specific relay so it can be retried immediately. */
     fun clearCooldown(url: String) {

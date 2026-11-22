@@ -3,7 +3,6 @@ package com.wisp.app.viewmodel
 import com.wisp.app.nostr.ClientMessage
 import com.wisp.app.nostr.CustomEmoji
 import com.wisp.app.nostr.Filter
-import com.wisp.app.nostr.Nip02
 import com.wisp.app.nostr.Nip13
 import com.wisp.app.nostr.Nip25
 import com.wisp.app.nostr.Nip30
@@ -33,12 +32,10 @@ import com.wisp.app.repo.ZapSender
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -64,8 +61,14 @@ class SocialActionManager(
     private val relayListRepo: RelayListRepository,
     private val scope: CoroutineScope,
     private val getSigner: () -> NostrSigner?,
-    private val getUserPubkey: () -> String?
+    private val getUserPubkey: () -> String?,
+    /** The only allowed signer of follows (3), mutes (10000) and pins (10001): pass the wanted state. */
+    private val listWriter: ListWriter? = null
 ) {
+    private companion object {
+        const val KIND_FOLLOWS = 3
+    }
+
     private val _zapInProgress = MutableStateFlow<Set<String>>(emptySet())
     val zapInProgress: StateFlow<Set<String>> = _zapInProgress
 
@@ -78,142 +81,110 @@ class SocialActionManager(
     private val _reactionSent = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
     val reactionSent: SharedFlow<Unit> = _reactionSent
 
-    // Non-null while the first-follow confirmation dialog is visible (holds the target pubkey).
+    // Non-null while the "No follow list found" dialog is visible (holds the first person to follow). Shown only
+    // after ListWriter's check of your write relays found no follow list (Refused NEEDS_CONFIRM).
     private val _pendingFirstFollow = MutableStateFlow<String?>(null)
     val pendingFirstFollow: StateFlow<String?> = _pendingFirstFollow
 
-    // False while we are still checking relays; true once the check confirms no existing list.
+    // Kept for the dialog: always true while it shows (the relay check is done before it opens).
     private val _firstFollowCheckDone = MutableStateFlow(false)
     val firstFollowCheckDone: StateFlow<Boolean> = _firstFollowCheckDone
 
-    private var followCheckJob: Job? = null
+    /** Everyone the dialog's "Follow anyway" would follow (one person, or a follow all). */
+    @Volatile private var firstFollowTargets: List<String> = emptyList()
 
-    fun toggleFollow(pubkey: String) {
-        val s = getSigner() ?: return
-        val isCurrentlyFollowing = contactRepo.isFollowing(pubkey)
-        val currentList = contactRepo.getFollowList()
+    // ---------------------------------------------------------------- follows (kind 3)
 
-        if (!isCurrentlyFollowing && currentList.isEmpty()) {
-            // Show the dialog immediately so the follow is blocked, then check relays in background.
-            _pendingFirstFollow.value = pubkey
-            _firstFollowCheckDone.value = false
-
-            followCheckJob?.cancel()
-            followCheckJob = scope.launch {
-                val relayList = fetchMyFollowListFromRelays()
-                if (_pendingFirstFollow.value == null) return@launch // user already dismissed
-                if (!relayList.isNullOrEmpty()) {
-                    // Relay returned an existing follow list — add and publish silently.
-                    _pendingFirstFollow.value = null
-                    _firstFollowCheckDone.value = false
-                    val newList = Nip02.addFollow(relayList, pubkey)
-                    val tags = Nip02.buildFollowTags(newList)
-                    val event = s.signEvent(kind = 3, content = "", tags = tags)
-                    relayPool.sendToWriteRelays(ClientMessage.event(event))
-                    contactRepo.updateFromEvent(event)
-                } else {
-                    // Confirmed no existing list — let user decide.
-                    _firstFollowCheckDone.value = true
-                }
-            }
-            return
-        }
-
-        val newList = if (isCurrentlyFollowing) {
-            Nip02.removeFollow(currentList, pubkey)
-        } else {
-            Nip02.addFollow(currentList, pubkey)
-        }
-        val tags = Nip02.buildFollowTags(newList)
-        scope.launch {
-            val event = s.signEvent(kind = 3, content = "", tags = tags)
-            relayPool.sendToWriteRelays(ClientMessage.event(event))
-            contactRepo.updateFromEvent(event)
+    /**
+     * Follow ([wanted] = true) or unfollow. [wanted] is the state the user asked for, from what the button showed at
+     * tap time. Only the one `p` entry changes; everything else in the follow list stays. When there is no follow list
+     * anywhere, the "No follow list found" dialog asks first ([confirmFirstFollow]).
+     */
+    fun setFollowing(pubkey: String, wanted: Boolean, onResult: (ListResult) -> Unit = {}) {
+        val w = listWriter ?: return
+        w.submit(KIND_FOLLOWS, listOf("p", pubkey), wanted) { r ->
+            if (needsConfirm(r)) askFirstFollow(listOf(pubkey))
+            onResult(r)
         }
     }
 
-    fun confirmFirstFollow() {
-        val pubkey = _pendingFirstFollow.value ?: return
-        _pendingFirstFollow.value = null
-        _firstFollowCheckDone.value = false
-        followCheckJob?.cancel()
-        followCheckJob = null
-        val s = getSigner() ?: return
-        val currentList = contactRepo.getFollowList()
-        val newList = Nip02.addFollow(currentList, pubkey)
-        val tags = Nip02.buildFollowTags(newList)
-        scope.launch {
-            val event = s.signEvent(kind = 3, content = "", tags = tags)
-            relayPool.sendToWriteRelays(ClientMessage.event(event))
-            contactRepo.updateFromEvent(event)
+    /** A follow button tap: the wanted state is the opposite of what the button shows now (pending changes included). */
+    fun toggleFollow(pubkey: String) = setFollowing(pubkey, wanted = !contactRepo.isFollowing(pubkey))
+
+    /** Follow several people in one write; nobody already followed is touched. */
+    fun followAll(pubkeys: Collection<String>, onResult: (ListResult) -> Unit = {}) {
+        val w = listWriter ?: return
+        val targets = pubkeys.distinct()
+        if (targets.isEmpty()) return
+        w.submitMany(KIND_FOLLOWS, targets.map { listOf("p", it) }, true) { r ->
+            if (needsConfirm(r)) askFirstFollow(targets)
+            onResult(r)
         }
+    }
+
+    /** Open the "No follow list found" dialog for [pubkeys]. */
+    fun askFirstFollow(pubkeys: List<String>) {
+        if (pubkeys.isEmpty()) return
+        firstFollowTargets = pubkeys
+        _firstFollowCheckDone.value = true
+        _pendingFirstFollow.value = pubkeys.first()
+    }
+
+    /** "Follow anyway": start a follow list with the people the dialog was for (still checked as a first list). */
+    fun confirmFirstFollow() {
+        val targets = firstFollowTargets
+        dismissFirstFollow()
+        if (targets.isEmpty()) return
+        val w = listWriter ?: return
+        w.submitMany(KIND_FOLLOWS, targets.map { listOf("p", it) }, true, confirmFirstList = true)
     }
 
     fun dismissFirstFollow() {
         _pendingFirstFollow.value = null
         _firstFollowCheckDone.value = false
-        followCheckJob?.cancel()
-        followCheckJob = null
+        firstFollowTargets = emptyList()
     }
 
-    private suspend fun fetchMyFollowListFromRelays(): List<Nip02.FollowEntry>? {
-        val myPubkey = getUserPubkey() ?: return null
-        val subId = "check-fl-${myPubkey.take(8)}"
-        relayPool.sendToReadRelays(ClientMessage.req(subId, Filter(kinds = listOf(3), authors = listOf(myPubkey), limit = 1)))
-        val result = withTimeoutOrNull(5_000) {
-            contactRepo.followList.first { it.isNotEmpty() }
+    private fun needsConfirm(r: ListResult) =
+        r is ListResult.Refused && r.reason == ListResult.Reason.NEEDS_CONFIRM
+
+    // ---------------------------------------------------------------- mutes (kind 10000)
+
+    /** Mute a person: hidden here at once, whatever the list write does; the list gets a private entry. */
+    fun blockUser(pubkey: String) = setUserMuted(pubkey, true)
+
+    fun unblockUser(pubkey: String) = setUserMuted(pubkey, false)
+
+    /**
+     * Mute ([wanted] = true) or unmute a person. The local effect is immediate and does not wait for the write. A new
+     * mute goes into the private part (a public tag when that can't be read or would be too large); unmute removes
+     * every copy from both parts.
+     */
+    fun setUserMuted(pubkey: String, wanted: Boolean, onResult: (ListResult) -> Unit = {}) {
+        if (wanted) {
+            muteRepo.blockLocally(pubkey)
+            eventRepo.purgeUser(pubkey)
+            notifRepo.purgeUser(pubkey)
+            dmRepo.purgeUser(pubkey)
+        } else {
+            muteRepo.unblockLocally(pubkey)
         }
-        relayPool.closeOnAllRelays(subId)
-        return result
+        listWriter?.submit(Nip51.KIND_MUTE_LIST, listOf("p", pubkey), wanted, place = ListPlace.PRIVATE_OR_PUBLIC, onResult = onResult)
     }
 
-    fun followAll(pubkeys: Set<String>) {
-        val s = getSigner() ?: return
-        var currentList = contactRepo.getFollowList()
-        for (pk in pubkeys) {
-            if (!contactRepo.isFollowing(pk)) {
-                currentList = Nip02.addFollow(currentList, pk)
-            }
-        }
-        val tags = Nip02.buildFollowTags(currentList)
-        scope.launch {
-            val event = s.signEvent(kind = 3, content = "", tags = tags)
-            relayPool.sendToWriteRelays(ClientMessage.event(event))
-            contactRepo.updateFromEvent(event)
-        }
+    /** Mute or unmute a word. Unmuting matches any spelling of it, wherever it is stored. */
+    fun setMutedWord(word: String, wanted: Boolean, onResult: (ListResult) -> Unit = {}) {
+        val w = word.trim()
+        if (w.isEmpty()) return
+        if (wanted) muteRepo.muteWordLocally(w) else muteRepo.unmuteWordLocally(w)
+        listWriter?.submit(Nip51.KIND_MUTE_LIST, listOf("word", w), wanted, place = ListPlace.PRIVATE_OR_PUBLIC, onResult = onResult)
     }
 
-    fun blockUser(pubkey: String) {
-        muteRepo.blockUser(pubkey)
-        eventRepo.purgeUser(pubkey)
-        notifRepo.purgeUser(pubkey)
-        dmRepo.purgeUser(pubkey)
-        publishMuteList()
-    }
-
-    fun unblockUser(pubkey: String) {
-        muteRepo.unblockUser(pubkey)
-        publishMuteList()
-    }
-
+    /** Muted threads are local only and never written to the mute list. */
     fun muteThread(rootEventId: String) {
         muteRepo.muteThread(rootEventId)
         notifRepo.purgeThread(rootEventId)
         eventRepo.purgeThread(rootEventId)
-    }
-
-    fun updateMutedWords() {
-        publishMuteList()
-    }
-
-    private fun publishMuteList() {
-        val s = getSigner() ?: return
-        scope.launch {
-            val privateJson = Nip51.buildMuteListContent(muteRepo.getBlockedPubkeys(), muteRepo.getMutedWords())
-            val encrypted = s.nip44Encrypt(privateJson, s.pubkeyHex)
-            val event = s.signEvent(kind = Nip51.KIND_MUTE_LIST, content = encrypted, tags = emptyList())
-            relayPool.sendToWriteRelays(ClientMessage.event(event))
-        }
     }
 
     fun sendRepost(event: NostrEvent) {
@@ -332,24 +303,20 @@ class SocialActionManager(
         }
     }
 
-    fun togglePin(eventId: String) {
-        if (pinRepo.isPinned(eventId)) {
-            pinRepo.unpinEvent(eventId)
-        } else {
-            pinRepo.pinEvent(eventId)
-        }
-        publishPinList()
+    // ---------------------------------------------------------------- pins (kind 10001)
+
+    /** Pin ([wanted] = true) or unpin a note. A new pin is an `e` tag with a relay hint when one is known. */
+    fun setPinned(eventId: String, wanted: Boolean, onResult: (ListResult) -> Unit = {}) {
+        listWriter?.submit(Nip51.KIND_PIN_LIST, eTagFor(eventId), wanted, onResult = onResult)
     }
 
-    private fun publishPinList() {
-        val s = getSigner() ?: return
-        val ids = pinRepo.getPinnedIds()
-        val hints = eventRepo.getRelayHintsForEvents(ids)
-        val tags = Nip51.buildPinListTags(ids, relayHints = hints)
-        scope.launch {
-            val event = s.signEvent(kind = Nip51.KIND_PIN_LIST, content = "", tags = tags)
-            relayPool.sendToWriteRelays(ClientMessage.event(event))
-        }
+    /** A pin button tap: the wanted state is the opposite of what the button shows now (pending changes included). */
+    fun togglePin(eventId: String) = setPinned(eventId, wanted = !pinRepo.isPinned(eventId))
+
+    /** `["e", id, hint]`, the hint left out when none is known. */
+    fun eTagFor(eventId: String): List<String> {
+        val hint = eventRepo.getRelayHintsForEvents(setOf(eventId))[eventId]
+        return if (hint.isNullOrBlank()) listOf("e", eventId) else listOf("e", eventId, hint)
     }
 
     fun deleteEvent(eventId: String, kind: Int) {

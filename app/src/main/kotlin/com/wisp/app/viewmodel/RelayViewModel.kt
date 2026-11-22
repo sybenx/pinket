@@ -21,6 +21,12 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
     private val keyRepo = KeyRepository(app)
     var relayPool: RelayPool? = null
 
+    /**
+     * The active account's own-list store (set by Navigation). A relay list signed here is given to it, so list
+     * writes (ListWriter) use your new write relays at once, not the ones from the last start-up.
+     */
+    var ownListStore: () -> com.wisp.app.repo.OwnListStore? = { null }
+
     private val _selectedTab = MutableStateFlow(RelaySetType.GENERAL)
     val selectedTab: StateFlow<RelaySetType> = _selectedTab
 
@@ -151,6 +157,7 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
 
             viewModelScope.launch {
                 val event = s.signEvent(kind = kind, content = "", tags = tags)
+                if (kind == 10002) ownListStore()?.seen(event)
                 val msg = ClientMessage.event(event)
                 relayPool.sendToWriteRelays(msg)
                 for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {

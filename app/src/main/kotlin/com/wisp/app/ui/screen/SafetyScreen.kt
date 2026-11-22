@@ -56,7 +56,10 @@ fun SafetyScreen(
     profileVersion: StateFlow<Int>,
     fetchProfile: (String) -> Unit,
     onBack: () -> Unit,
-    onChanged: () -> Unit = {},
+    /** A muted word added (true) or removed (false), with the spelling shown: written through ListWriter. */
+    onMutedWordChanged: (word: String, wanted: Boolean) -> Unit = { _, _ -> },
+    /** A person muted (true) or unmuted (false) from this screen: written through ListWriter. */
+    onUserMuteChanged: (pubkey: String, wanted: Boolean) -> Unit = { _, _ -> },
     safetyPrefs: SafetyPreferences? = null,
     cachedNetwork: StateFlow<ExtendedNetworkCache?>? = null,
     isNetworkReady: () -> Boolean = { false },
@@ -114,8 +117,8 @@ fun SafetyScreen(
                         onWotToggled = onWotToggled
                     )
                 }
-                1 -> MutedWordsTab(muteRepo, onChanged)
-                2 -> MutedUsersTab(muteRepo, profileRepo, profileVersion, fetchProfile, onChanged)
+                1 -> MutedWordsTab(muteRepo, onMutedWordChanged)
+                2 -> MutedUsersTab(muteRepo, profileRepo, profileVersion, fetchProfile, onUserMuteChanged)
             }
         }
     }
@@ -124,7 +127,7 @@ fun SafetyScreen(
 @Composable
 private fun MutedWordsTab(
     muteRepo: MuteRepository,
-    onChanged: () -> Unit
+    onMutedWordChanged: (word: String, wanted: Boolean) -> Unit
 ) {
     val mutedWords by muteRepo.mutedWords.collectAsState()
     var newWord by remember { mutableStateOf("") }
@@ -157,9 +160,8 @@ private fun MutedWordsTab(
                 onClick = {
                     val word = newWord.trim()
                     if (word.isNotEmpty()) {
-                        muteRepo.addMutedWord(word)
+                        onMutedWordChanged(word.lowercase(), true)
                         newWord = ""
-                        onChanged()
                     }
                 }
             ) {
@@ -184,10 +186,8 @@ private fun MutedWordsTab(
                         modifier = Modifier.weight(1f)
                     )
                     IconButton(
-                        onClick = {
-                            muteRepo.removeMutedWord(word)
-                            onChanged()
-                        }
+                        // The stored spelling; removal matches it in any case.
+                        onClick = { onMutedWordChanged(word, false) }
                     ) {
                         Icon(
                             Icons.Default.Close,
@@ -207,7 +207,7 @@ private fun MutedUsersTab(
     profileRepo: ProfileRepository,
     profileVersion: StateFlow<Int>,
     fetchProfile: (String) -> Unit,
-    onChanged: () -> Unit
+    onUserMuteChanged: (pubkey: String, wanted: Boolean) -> Unit
 ) {
     val blockedPubkeys by muteRepo.blockedPubkeys.collectAsState()
     val sorted = remember(blockedPubkeys) { blockedPubkeys.toList().sorted() }
@@ -268,10 +268,7 @@ private fun MutedUsersTab(
                         }
                     }
                     IconButton(
-                        onClick = {
-                            muteRepo.unblockUser(pubkey)
-                            onChanged()
-                        }
+                        onClick = { onUserMuteChanged(pubkey, false) }
                     ) {
                         Icon(
                             Icons.Default.Close,
