@@ -217,7 +217,29 @@ class ListWriter(
         explicit: Boolean = false
     ): ListResult = withContext(work) {
         val op = if (wanted) ListEdit.Op.ADD else ListEdit.Op.REMOVE
-        editNow(kind, entries.map { ListEdit(it, op) }, d, place, confirmFirstList, expected, title, account, explicit)
+        editNow(kind, entries.map { ListEdit(it, op) }, d, { place }, confirmFirstList, expected, title, account, explicit)
+    }
+
+    /**
+     * Put entries that went missing back into your newest version of [kind] (a set: [d]), as one write when possible:
+     * [public] entries as public tags, [private] ones into the private part only (refused when it cannot be read).
+     * Only adds: entries already there (in either part) are left as they are, nothing is taken out, and the write
+     * goes through the same steps and last check as every other change. The user picked this list on screen.
+     */
+    suspend fun putBack(
+        kind: Int,
+        d: String?,
+        public: List<List<String>>,
+        private: List<List<String>>,
+        account: ListAccount? = null
+    ): ListResult = withContext(work) {
+        val privateIds = private.mapNotNull { entryId(it) }.toSet()
+        val edits = (public + private).map { ListEdit(it, ListEdit.Op.ADD) }
+        editNow(
+            kind, edits, d,
+            placeOf = { if (entryId(it.entry) in privateIds && hasPrivatePart(kind)) ListPlace.PRIVATE else ListPlace.PUBLIC },
+            confirmFirstList = false, expected = true, title = null, account = account, explicit = true
+        )
     }
 
     /**
@@ -234,13 +256,13 @@ class ListWriter(
         title: String? = null,
         explicit: Boolean = false,
         account: ListAccount? = null
-    ): ListResult = withContext(work) { editNow(kind, edits, d, place, false, expected, title, account, explicit) }
+    ): ListResult = withContext(work) { editNow(kind, edits, d, { place }, false, expected, title, account, explicit) }
 
     private suspend fun editNow(
         kind: Int,
         edits: List<ListEdit>,
         d: String?,
-        place: ListPlace,
+        placeOf: (ListEdit) -> ListPlace,
         confirmFirstList: Boolean,
         expected: Boolean,
         title: String?,
@@ -269,8 +291,11 @@ class ListWriter(
                 byEntry.remove(id)
                 byEntry[id] = ed
             }
+            // Taken out on purpose: never offered back by the wipe guard.
+            store.excludeFromKept(key, byEntry.filterValues { it.op == ListEdit.Op.REMOVE }.keys)
             for ((id, ed) in byEntry) {
                 val e = ed.entry
+                val place = placeOf(ed)
                 val wanted = ed.op != ListEdit.Op.REMOVE
                 val replace = ed.op == ListEdit.Op.SET
                 // A repeat tap for the same wanted state while that change is still pending: nothing new.
@@ -401,6 +426,7 @@ class ListWriter(
                             return@withLock ListResult.Refused(ListResult.Reason.NOT_SENT, "sign failed")
                         }
                         if (event.pubkey.lowercase() != me || activePubkey()?.lowercase() != me) return@withLock ListResult.Pending
+                        store.signedHere(event)
                         val pub = sink.publish(event, prep.writeRelays, publishOthers(prep.writeRelays, extraRelays))
                         if (pub.sentTo.isEmpty()) return@withLock ListResult.Pending
                         if (!store.recordSigned(event)) return@withLock ListResult.Pending
@@ -734,6 +760,7 @@ class ListWriter(
                 }
                 if (event.pubkey.lowercase() != me) return@withLock out(ListResult.Refused(ListResult.Reason.NOT_SENT, "another key"))
                 if (activePubkey()?.lowercase() != me) return@withLock out(ListResult.Refused(ListResult.Reason.NOT_SENT, "account changed"), true)
+                store.signedHere(event)
                 val pub = sink.publish(event, ready.writeRelays, publishOthers(ready.writeRelays, extraPublishRelays(event)))
                 if (pub.sentTo.isEmpty() || !store.recordSigned(event)) {
                     return@withLock out(ListResult.Refused(ListResult.Reason.NOT_SENT, "not sent"))
@@ -1064,6 +1091,7 @@ class ListWriter(
             finish(acct, results, quiet = true)
             return
         }
+        store.signedHere(event)
         val pub = sink.publish(event, prep.writeRelays, publishOthers(prep.writeRelays, extraPublishRelays(event)))
         if (pub.sentTo.isEmpty() || !store.recordSigned(event)) {
             // Nothing went out (or a newer version arrived meanwhile): keep every change pending, drop the event.

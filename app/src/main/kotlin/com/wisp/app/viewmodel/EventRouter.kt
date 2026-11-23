@@ -84,7 +84,9 @@ class EventRouter(
     /** The active account's own-list store (null before an account is loaded). */
     private val getOwnListStore: () -> OwnListStore? = { null },
     /** A set was hidden or shown again here (a deletion request for it arrived): refresh what is shown. */
-    private val onHiddenSetsChanged: () -> Unit = {}
+    private val onHiddenSetsChanged: () -> Unit = {},
+    /** One of your lists the wipe guard watches got a new newest version here (from a relay or signed here). */
+    private val onGuardedListApplied: () -> Unit = {}
 ) {
     /**
      * IDs of the user's own recent events used to build the notif-replies-etag subscription.
@@ -142,6 +144,7 @@ class EventRouter(
         val myPubkey = getUserPubkey() ?: return
         if (event.pubkey != myPubkey) return
         if (OwnListStore.isAddressable(event.kind)) showAgainIfNewer(event)
+        if (com.wisp.app.repo.ListDrop.guarded(event.kind)) onGuardedListApplied()
         when (event.kind) {
             // Your profile, as the list writer found or signed it (incoming profiles reach the cache the usual way).
             0 -> eventRepo.addEvent(event)

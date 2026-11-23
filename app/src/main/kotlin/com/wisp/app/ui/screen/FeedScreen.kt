@@ -206,6 +206,8 @@ fun FeedScreen(
     onWalletRefresh: () -> Unit = {},
 ) {
     val feed by viewModel.feed.collectAsState()
+    val wipeNotices by viewModel.wipeNotices.collectAsState()
+    val wipeBusy by viewModel.wipeBusy.collectAsState()
     val feedType by viewModel.feedType.collectAsState()
     val contentFilter by viewModel.feedContentFilter.collectAsState()
     val selectedRelay by viewModel.selectedRelay.collectAsState()
@@ -1067,6 +1069,15 @@ fun FeedScreen(
                     mode = trendingMode,
                     onWindowChange = { viewModel.setTrendingWindow(it) },
                     onModeChange = { viewModel.setTrendingMode(it) }
+                )
+            }
+            // One of your lists lost entries in another app: one at a time, the oldest first.
+            wipeNotices.firstOrNull()?.let { notice ->
+                com.wisp.app.ui.component.WipeNoticeCard(
+                    notice = notice,
+                    busy = wipeBusy == notice.key,
+                    onPutBack = { viewModel.putBackMissing(notice) },
+                    onLeave = { viewModel.leaveMissing(notice) }
                 )
             }
             Box(

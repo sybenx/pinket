@@ -136,6 +136,8 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         zapSender.signer = s
         registerAuthSigner()
         listWriter.refreshOverlay()
+        // Kept copies with a private part wait for the signer to be read.
+        wipeGuard.requestRefresh()
         // A mute list loaded while no signer was set has its private part unread: read it now.
         val mutes = ownListStore?.latest(com.wisp.app.nostr.Nip51.KIND_MUTE_LIST)
         if (mutes != null && mutes.pubkey.equals(s.pubkeyHex, ignoreCase = true)) {
@@ -360,7 +362,9 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         onHiddenSetsChanged = {
             listWriter.refreshOverlay()
             setsOverlayTick.value++
-        }
+        },
+        // Null only while the view model is still being built (the guard checks everything once it starts).
+        onGuardedListApplied = { (wipeGuard as WipeGuard?)?.requestRefresh() }
     )
 
     /** Bumped when the sets hidden here change outside ListWriter (start-up move, a deletion request arrived). */
@@ -393,6 +397,26 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         scope = accountScope,
         project = { eventRouter.applyOwnList(it) }
     )
+
+    /**
+     * Notices when one of your lists lost entries in another app, with the fuller copy kept here (WipeGuard).
+     * The feed shows the oldest open one.
+     */
+    val wipeGuard: WipeGuard = WipeGuard(account = { listAccount() }, writer = listWriter, scope = accountScope)
+    val wipeNotices: StateFlow<List<WipeNotice>> = wipeGuard.notices
+    val wipeBusy: StateFlow<String?> = wipeGuard.busy
+
+    fun putBackMissing(notice: WipeNotice) {
+        accountScope.launch { wipeGuard.putBack(notice) }
+    }
+
+    fun leaveMissing(notice: WipeNotice) {
+        accountScope.launch { wipeGuard.leaveIt(notice) }
+    }
+
+    init {
+        wipeGuard.requestRefresh()
+    }
 
     init {
         // Buttons show pending list changes at once (the projections still change only from a signed version).
@@ -614,6 +638,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         // Logging out drops this account's kept list versions and pending changes (not what it has ever seen).
         if (clearPersisted) ownListStore?.clear()
         ownListStore = null
+        wipeGuard.clear()
         startup.resetForAccountSwitch(clearPersisted)
         groupRepo.clear()
         liveStreamRepo.clear()
@@ -651,6 +676,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         )
         accountScope.start()
         listWriter.refreshOverlay()
+        wipeGuard.requestRefresh()
         if (resumePublications) startPublications()
     }
 

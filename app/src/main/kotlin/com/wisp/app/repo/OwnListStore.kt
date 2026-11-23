@@ -75,6 +75,20 @@ data class PendingChange(
 }
 
 /**
+ * The fuller version of a list, kept when a version from a relay replaced it and may have lost entries.
+ * [event]: its JSON. [at]: when that was noticed (seconds). [open]: checked (both private parts read) and it is a
+ * drop, so it is offered; false: still to be checked. [excluded]: entries (ListWriter.entryId) taken out on this
+ * device since, never offered back.
+ */
+@Serializable
+data class KeptCopy(
+    val event: String,
+    val at: Long,
+    val open: Boolean = false,
+    val excluded: List<String> = emptyList()
+)
+
+/**
  * Per-account record of the newest own version of each list (kind, or kind:d for sets),
  * as raw event JSON, plus what this device knows about each list:
  * - everSeen: this device has seen a version (survives [clear]); a seeded legacy watermark > 0 counts.
@@ -83,6 +97,7 @@ data class PendingChange(
  * - madeHere: a set this app created (and whether it was created private).
  * - unconfirmed: a signed event that no relay has accepted yet.
  * - pending: changes that could not be written yet.
+ * - kept (wipe guard): the version before one from a relay that may have lost entries ([KeptCopy], ListDrop).
  * - hidden: sets the user took away here (kind:d). Nothing is published for that (never a deletion request), the set
  *   is only not shown on this device. Survives [clear].
  *
@@ -118,7 +133,10 @@ class OwnListStore(
         if (event.pubkey.lowercase() != pubkeyHex) return false
         val unconfirmedId = unconfirmedEvent(key)?.id
         if (unconfirmedId != null && unconfirmedId == event.id) storage.put(UNCONF + key, null)
-        accept(key, event)
+        val old = parse(storage.get(EV + key))
+        val ok = accept(key, event)
+        if (ok && old != null) keepIfDropped(key, old, event)
+        ok
     }
 
     /**
@@ -128,6 +146,8 @@ class OwnListStore(
     fun recordSigned(event: NostrEvent): Boolean = synchronized(lock) {
         val key = keyOrNull(event) ?: return false
         if (event.pubkey.lowercase() != pubkeyHex) return false
+        // Recorded now: an echo from a relay from here on is not newer than what is stored.
+        signedHereIds.remove("$pubkeyHex|${event.id}")
         // A relay can echo the version back before this runs (a live subscription for your own events): the store
         // then already holds it, from a relay, and that is as good as recorded.
         if (parse(storage.get(EV + key))?.id == event.id) return true
@@ -157,6 +177,75 @@ class OwnListStore(
         synchronized(lock) {
             if (to < watermark(key)) storage.put(WM + key, to.coerceAtLeast(0L).toString())
         }
+    }
+
+    // ---- wipe guard: the fuller copy kept when a version from a relay lost entries ----
+
+    /**
+     * [event] was just signed on this device and is about to be sent: when a relay sends it back before
+     * [recordSigned] runs, it is this device's own change, never a drop. Remembered for this app run only.
+     */
+    fun signedHere(event: NostrEvent) {
+        signedHereIds.add("$pubkeyHex|${event.id}")
+    }
+
+    /** The kept copy for [key], or null. */
+    fun kept(key: String): KeptCopy? = synchronized(lock) { readKept(key) }
+
+    /** Keys that have a kept copy. */
+    fun keptKeys(): Set<String> = synchronized(lock) {
+        storage.names().filter { it.startsWith(KEPT) }.map { it.removePrefix(KEPT) }.toSet()
+    }
+
+    /** The kept copy for [key] was checked and is a drop: offer it (it stays until [forgetKept]). */
+    fun openKept(key: String) {
+        synchronized(lock) {
+            val k = readKept(key) ?: return
+            if (!k.open) writeKept(key, k.copy(open = true))
+        }
+    }
+
+    /** Forget the kept copy for [key] (put back, left, or nothing is missing any more). */
+    fun forgetKept(key: String) {
+        synchronized(lock) { storage.put(KEPT + key, null) }
+    }
+
+    /**
+     * Entries the user takes out here on purpose ([ids], ListWriter.entryId): never offered back from the kept copy
+     * for [key]. Nothing happens when there is no kept copy.
+     */
+    fun excludeFromKept(key: String, ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        synchronized(lock) {
+            val k = readKept(key) ?: return
+            val next = (k.excluded + ids).distinct()
+            if (next.size != k.excluded.size) writeKept(key, k.copy(excluded = next))
+        }
+    }
+
+    /**
+     * A version from a relay replaced [old] for [key]: keep [old] when it may have lost entries (ListDrop). The first
+     * kept copy stays (the earliest, fullest one); a version this device signed is never a drop.
+     */
+    private fun keepIfDropped(key: String, old: NostrEvent, next: NostrEvent) {
+        if (!ListDrop.guarded(next.kind)) return
+        if ("$pubkeyHex|${next.id}" in signedHereIds) return
+        if (storage.get(KEPT + key) != null) return
+        if (!ListDrop.mayHaveDropped(old, next)) return
+        writeKept(key, KeptCopy(event = old.toJson(), at = clock()))
+    }
+
+    private fun readKept(key: String): KeptCopy? {
+        val raw = storage.get(KEPT + key) ?: return null
+        return try {
+            json.decodeFromString(KeptCopy.serializer(), raw)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun writeKept(key: String, k: KeptCopy) {
+        storage.put(KEPT + key, json.encodeToString(KeptCopy.serializer(), k))
     }
 
     // ---- unconfirmed ----
@@ -329,13 +418,13 @@ class OwnListStore(
     fun mutex(kind: Int, d: String? = null): Mutex = mutex(key(kind, d))
 
     /**
-     * Forgets stored versions (and what was loaded from them), unconfirmed events, pending changes and the new-account
-     * mark. Keeps everSeen, watermarks, madeHere and hidden sets.
+     * Forgets stored versions (and what was loaded from them), kept copies, unconfirmed events, pending changes and the
+     * new-account mark. Keeps everSeen, watermarks, madeHere and hidden sets.
      */
     fun clear() {
         synchronized(lock) {
             for (name in storage.names()) {
-                if (name.startsWith(EV) || name.startsWith(UNCONF) || name.startsWith(PENDING) || name.startsWith(PROJECTED) || name == NEW_ACCOUNT) {
+                if (name.startsWith(EV) || name.startsWith(UNCONF) || name.startsWith(KEPT) || name.startsWith(PENDING) || name.startsWith(PROJECTED) || name == NEW_ACCOUNT) {
                     storage.put(name, null)
                 }
             }
@@ -432,6 +521,10 @@ class OwnListStore(
         private const val DELETION = "del:"
         private const val ONCE = "once:"
         private const val PROJECTED = "proj:"
+        /** The wipe guard's kept copy of a list ([KeptCopy]). */
+        private const val KEPT = "guard:"
+        /** "pubkey|event id" of versions signed on this device in this app run ([signedHere]). */
+        private val signedHereIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
         private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
         private val pendingSerializer = ListSerializer(PendingChange.serializer())

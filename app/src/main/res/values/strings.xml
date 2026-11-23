@@ -1026,4 +1026,27 @@
     <string name="list_no_changes">No changes to save.</string>
     <string name="list_reloaded">Your newest saved list was loaded here. Check it, then save again.</string>
     <string name="list_hide_confirm">Hide \"%1$s\" here? Other apps still show it. Making a list with the same name brings it back.</string>
+    <!-- A list lost entries in another app (wipe guard card on the feed) -->
+    <plurals name="wipe_missing_bookmarks">
+        <item quantity="one">%1$d bookmark went missing on %2$s.</item>
+        <item quantity="other">%1$d bookmarks went missing on %2$s.</item>
+    </plurals>
+    <plurals name="wipe_missing_mutes">
+        <item quantity="one">%1$d mute went missing on %2$s.</item>
+        <item quantity="other">%1$d mutes went missing on %2$s.</item>
+    </plurals>
+    <plurals name="wipe_missing_follows">
+        <item quantity="one">%1$d person you follow went missing on %2$s.</item>
+        <item quantity="other">%1$d people you follow went missing on %2$s.</item>
+    </plurals>
+    <plurals name="wipe_missing_pins">
+        <item quantity="one">%1$d pinned post went missing on %2$s.</item>
+        <item quantity="other">%1$d pinned posts went missing on %2$s.</item>
+    </plurals>
+    <plurals name="wipe_missing_set">
+        <item quantity="one">%1$d entry went missing from %2$s on %3$s.</item>
+        <item quantity="other">%1$d entries went missing from %2$s on %3$s.</item>
+    </plurals>
+    <string name="wipe_put_back">Put back</string>
+    <string name="wipe_leave_it">Leave it</string>
 </resources>
