@@ -221,7 +221,7 @@ fun WispDrawerContent(
             ) {
                 Text(
                     text = profile?.displayString ?: "Anonymous",
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleLarge.copy(fontFamily = com.wisp.app.ui.theme.PinketSerif),
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f, fill = false)
                 )
@@ -577,21 +577,30 @@ fun WispDrawerContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 16.dp),
-            horizontalArrangement = Arrangement.Center,
+            horizontalArrangement = Arrangement.Start,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
+            androidx.compose.foundation.Image(
                 painter = painterResource(R.drawable.ic_wisp_logo),
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-                modifier = Modifier.size(16.dp)
+                modifier = Modifier.size(72.dp)
             )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = "pinket v$versionName",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
-            )
+            Spacer(Modifier.width(4.dp))
+            Column {
+                Text(
+                    text = "Pinket",
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontFamily = com.wisp.app.ui.theme.PinketSerif,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "v$versionName",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
         }
     }

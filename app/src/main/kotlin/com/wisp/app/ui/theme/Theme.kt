@@ -36,7 +36,9 @@ data class WispColors(
     val paidColor: Color,
     /** Opal gradient on the pinket theme, solid primary on every other theme. */
     val signatureBrush: Brush,
-    val hintColor: Color
+    val hintColor: Color,
+    /** The lantern look (tin, opal light): on for the default accent only. */
+    val lantern: Boolean = false
 )
 
 object WispThemeColors {
@@ -49,6 +51,8 @@ object WispThemeColors {
     val signatureBrush: Brush @Composable get() = LocalWispColors.current.signatureBrush
     /** Small marks and corner lines (verified, liked, unread): pink on the default accent, the accent otherwise. */
     val hintColor: Color @Composable get() = LocalWispColors.current.hintColor
+    /** True on the default theme and accent, where the lantern look applies. */
+    val lantern: Boolean @Composable get() = LocalWispColors.current.lantern
 }
 
 @Composable
@@ -127,7 +131,8 @@ fun WispTheme(
                     bookmarkColor = colorScheme.primary,
                     paidColor = if (isDarkTheme) Color(0xFFFFD54F) else Color(0xFFC9A000),
                     signatureBrush = SolidColor(colorScheme.primary),
-                    hintColor = if (twoTone) PinketTwoTone.hint(isDarkTheme) else colorScheme.primary
+                    hintColor = if (twoTone) PinketTwoTone.hint(isDarkTheme) else colorScheme.primary,
+                    lantern = twoTone
                 )
             }
             else -> {

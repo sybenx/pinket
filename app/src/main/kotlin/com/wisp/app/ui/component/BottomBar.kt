@@ -108,7 +108,7 @@ fun WispBottomBar(
                 selected = selected,
                 onClick = { onTabSelected(tab) },
                 colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                    selectedIconColor = (if (WispThemeColors.lantern) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary),
                     unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     // Drop the active-pill indicator — the orange tint on
                     // the selected icon is enough signal (matches iOS).
@@ -120,7 +120,7 @@ fun WispBottomBar(
                         modifier = Modifier.requiredSize(24.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        val zapTint = if (selected) MaterialTheme.colorScheme.primary
+                        val zapTint = if (selected) (if (WispThemeColors.lantern) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary)
                             else MaterialTheme.colorScheme.onSurfaceVariant
                         if (tab == BottomTab.NOTIFICATIONS && isZapAnimating && useBolt) {
                             Icon(
@@ -148,7 +148,14 @@ fun WispBottomBar(
                                 tint = zapTint
                             )
                         }
-                        if (hasUnread) {
+                        if (hasUnread && WispThemeColors.lantern) {
+                            com.wisp.app.ui.theme.LanternLight(
+                                size = 9.dp,
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 2.dp, y = (-2).dp)
+                            )
+                        } else if (hasUnread) {
                             Box(
                                 modifier = Modifier
                                     .size(8.dp)

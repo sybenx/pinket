@@ -1,5 +1,6 @@
 package com.wisp.app.ui.screen
 
+import androidx.compose.ui.unit.sp
 import com.wisp.app.ui.component.HeldRowsPill
 import com.wisp.app.ui.theme.WispThemeColors
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -753,7 +754,8 @@ fun UserProfileScreen(
                                                 .width(pos.width - 12.dp)
                                                 .height(2.dp)
                                                 .background(
-                                                    MaterialTheme.colorScheme.primary,
+                                                    if (WispThemeColors.lantern) MaterialTheme.colorScheme.onSurface
+                                                    else MaterialTheme.colorScheme.primary,
                                                     RoundedCornerShape(topStart = 2.dp, topEnd = 2.dp)
                                                 )
                                         )
@@ -775,8 +777,9 @@ fun UserProfileScreen(
                                     Text(
                                         text = title,
                                         style = MaterialTheme.typography.labelMedium,
-                                        color = if (selected) MaterialTheme.colorScheme.primary
-                                                else MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = if (!selected) MaterialTheme.colorScheme.onSurfaceVariant
+                                                else if (WispThemeColors.lantern) MaterialTheme.colorScheme.onSurface
+                                                else MaterialTheme.colorScheme.primary
                                     )
                                 }
                             }
@@ -1560,7 +1563,10 @@ private fun ProfileHeader(
         ) {
             Text(
                 text = profile?.displayString ?: "",
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontFamily = com.wisp.app.ui.theme.PinketSerif,
+                    fontSize = 24.sp
+                ),
                 color = MaterialTheme.colorScheme.onSurface
             )
             if (followsYou) {

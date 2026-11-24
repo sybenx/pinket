@@ -326,7 +326,7 @@ fun NotificationsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             stringResource(R.string.nav_notifications),
-                            style = MaterialTheme.typography.titleMedium,
+                            style = MaterialTheme.typography.titleLarge.copy(fontFamily = com.wisp.app.ui.theme.PinketSerif),
                             maxLines = 1
                         )
                         Text(
@@ -521,23 +521,29 @@ fun NotificationsScreen(
 /** Shown at the top while new notifications wait above the ones being read. */
 @Composable
 private fun NewNotificationsPill(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val lantern = WispThemeColors.lantern
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.primary,
-        contentColor = MaterialTheme.colorScheme.onPrimary,
+        color = if (lantern) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primary,
+        contentColor = if (lantern) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onPrimary,
         shadowElevation = 4.dp,
-        modifier = modifier.cornerRim(WispThemeColors.hintColor, MaterialTheme.colorScheme.primary)
+        modifier = if (lantern) modifier else modifier.cornerRim(WispThemeColors.hintColor, MaterialTheme.colorScheme.primary)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                Icons.Default.KeyboardArrowUp,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            )
+            if (lantern) {
+                com.wisp.app.ui.theme.LanternLight(10.dp)
+                Spacer(Modifier.width(4.dp))
+            } else {
+                Icon(
+                    Icons.Default.KeyboardArrowUp,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
             Spacer(Modifier.width(4.dp))
             Text("New notifications", style = MaterialTheme.typography.labelMedium)
         }

@@ -132,6 +132,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.itemsIndexed
 import com.wisp.app.ui.theme.WispThemeColors
 import com.wisp.app.ui.theme.cornerRim
+import com.wisp.app.ui.theme.serifName
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.outlined.CurrencyBitcoin
@@ -770,15 +771,28 @@ fun FeedScreen(
                     windowInsets = WindowInsets(0),
                     title = {
                                 Box {
+                                    val lanternTitle = WispThemeColors.lantern
                                     Surface(
                                         onClick = { showFeedTypeDropdown = true },
                                         shape = RoundedCornerShape(20.dp),
-                                        color = MaterialTheme.colorScheme.surfaceVariant
+                                        color = if (lanternTitle) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant
                                     ) {
                                         Row(
-                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                                            modifier = Modifier.padding(
+                                                start = if (lanternTitle) 4.dp else 14.dp,
+                                                end = if (lanternTitle) 8.dp else 14.dp,
+                                                top = if (lanternTitle) 2.dp else 6.dp,
+                                                bottom = if (lanternTitle) 2.dp else 6.dp
+                                            ),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
+                                            if (lanternTitle) {
+                                                androidx.compose.foundation.Image(
+                                                    painter = androidx.compose.ui.res.painterResource(R.drawable.ic_wisp_logo),
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(36.dp)
+                                                )
+                                            }
                                             val feedLabel = when (feedType) {
                                                 FeedType.FOR_YOU -> stringResource(R.string.tab_for_you)
                                                 FeedType.FOLLOWS -> stringResource(R.string.tab_follows)
@@ -793,7 +807,8 @@ fun FeedScreen(
                                             }
                                             Text(
                                                 feedLabel,
-                                                style = MaterialTheme.typography.titleSmall,
+                                                style = if (lanternTitle) MaterialTheme.typography.titleLarge.serifName()
+                                                    else MaterialTheme.typography.titleSmall,
                                                 maxLines = 1,
                                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                                 modifier = Modifier.widthIn(max = 140.dp)
@@ -1025,15 +1040,24 @@ fun FeedScreen(
                         ),
                         label = "fabAlpha"
                     )
-                    FloatingActionButton(
-                        onClick = onCompose,
-                        shape = CircleShape,
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .graphicsLayer { alpha = fabAlpha }
-                            .cornerRim(WispThemeColors.hintColor, MaterialTheme.colorScheme.primary)
-                    ) {
-                        Icon(Icons.Default.Edit, contentDescription = "New post")
+                    if (WispThemeColors.lantern) {
+                        com.wisp.app.ui.theme.LanternEyeButton(
+                            onClick = onCompose,
+                            icon = Icons.Default.Edit,
+                            contentDescription = "New post",
+                            modifier = Modifier.graphicsLayer { alpha = fabAlpha }
+                        )
+                    } else {
+                        FloatingActionButton(
+                            onClick = onCompose,
+                            shape = CircleShape,
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .graphicsLayer { alpha = fabAlpha }
+                                .cornerRim(WispThemeColors.hintColor, MaterialTheme.colorScheme.primary)
+                        ) {
+                            Icon(Icons.Default.Edit, contentDescription = "New post")
+                        }
                     }
                 }
             }
@@ -1132,10 +1156,7 @@ fun FeedScreen(
                                 )
                             }
                             feedType == FeedType.LIST && selectedList != null && selectedList!!.members.isEmpty() -> {
-                                Text(
-                                    "This list is empty",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                com.wisp.app.ui.theme.UnlitLantern("This list is empty")
                             }
                             feedType == FeedType.RELAY -> {
                                 RelayFeedEmptyState(
@@ -1156,29 +1177,43 @@ fun FeedScreen(
                             }
                             contentFilter != FeedContentFilter.ALL -> {
                                 // Content filter active but no matching posts
-                                Text(
+                                com.wisp.app.ui.theme.UnlitLantern(
                                     when (contentFilter) {
                                         FeedContentFilter.GALLERY_ONLY -> "No gallery posts in your feed yet"
                                         FeedContentFilter.POLLS_ONLY -> "No polls in your feed yet"
                                         FeedContentFilter.TEXT_ONLY -> "No notes in your feed yet"
                                         else -> "No posts yet"
-                                    },
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
                                 )
                             }
                             else -> {
-                                Text(
-                                    "No posts yet",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                com.wisp.app.ui.theme.UnlitLantern("No posts yet")
                             }
                         }
                     }
                 } else {
+                    val pullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+                    val lanternRefresh = WispThemeColors.lantern
                     PullToRefreshBox(
                         isRefreshing = isRefreshing,
                         onRefresh = { feedHolder.syncNow(); viewModel.refreshFeed() },
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize(),
+                        state = pullState,
+                        indicator = {
+                            if (lanternRefresh) {
+                                com.wisp.app.ui.theme.LanternRefreshIndicator(
+                                    fraction = { pullState.distanceFraction },
+                                    isRefreshing = isRefreshing,
+                                    modifier = Modifier.align(Alignment.TopCenter)
+                                )
+                            } else {
+                                androidx.compose.material3.pulltorefresh.PullToRefreshDefaults.Indicator(
+                                    state = pullState,
+                                    isRefreshing = isRefreshing,
+                                    modifier = Modifier.align(Alignment.TopCenter)
+                                )
+                            }
+                        }
                     ) {
                         LazyColumn(
                             state = listState,
@@ -2389,13 +2424,17 @@ private fun NewNotesButton(
         modifier = modifier.graphicsLayer { alpha = buttonAlpha }
     ) {
         Box {
+            val lantern = WispThemeColors.lantern
             Surface(
                 shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
+                color = if (lantern) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primary,
+                contentColor = if (lantern) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onPrimary,
                 shadowElevation = 4.dp,
                 modifier = Modifier
-                    .cornerRim(WispThemeColors.hintColor, MaterialTheme.colorScheme.primary)
+                    .cornerRim(
+                        if (lantern) Color.Unspecified else WispThemeColors.hintColor,
+                        MaterialTheme.colorScheme.primary
+                    )
                     .combinedClickable(
                     onClick = onClick,
                     onLongClick = { showMenu = true }
@@ -2405,12 +2444,17 @@ private fun NewNotesButton(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        Icons.Default.KeyboardArrowUp,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
+                    if (lantern) {
+                        com.wisp.app.ui.theme.LanternLight(10.dp)
+                        Spacer(Modifier.width(8.dp))
+                    } else {
+                        Icon(
+                            Icons.Default.KeyboardArrowUp,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                    }
                     Text(
                         stringResource(R.string.new_notes_button, count),
                         style = MaterialTheme.typography.labelMedium

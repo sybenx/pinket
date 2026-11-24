@@ -104,7 +104,7 @@ fun AuthScreen(
             contentDescription = stringResource(R.string.onboarding_wisp_logo),
             tint = androidx.compose.ui.graphics.Color.Unspecified,
             modifier = Modifier
-                .size(108.dp)
+                .size(200.dp)
                 .drawBehind {
                     drawCircle(
                         brush = androidx.compose.ui.graphics.Brush.radialGradient(
@@ -120,13 +120,13 @@ fun AuthScreen(
                 }
         )
         Text(
-            text = stringResource(R.string.auth_wisp),
+            text = "Pinket",
             style = MaterialTheme.typography.titleLarge.copy(
-                fontFamily = FontFamily.SansSerif,
-                fontSize = 36.sp,
-                fontWeight = FontWeight.W500
+                fontFamily = com.wisp.app.ui.theme.PinketSerif,
+                fontSize = 40.sp,
+                fontWeight = FontWeight.Normal
             ),
-            color = MaterialTheme.colorScheme.primary
+            color = MaterialTheme.colorScheme.onBackground
         )
         Spacer(Modifier.height(4.dp))
         Text(

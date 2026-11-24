@@ -75,6 +75,8 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material3.Surface
+import com.wisp.app.ui.theme.serifName
+import com.wisp.app.ui.theme.serifAside
 import com.wisp.app.nostr.Nip05
 import com.wisp.app.nostr.toNpub
 import com.wisp.app.nostr.Nip10
@@ -414,7 +416,7 @@ fun PostCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = displayName,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleMedium.serifName(),
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -441,11 +443,10 @@ fun PostCard(
                 if (userStatus != null && !Nip10.isReply(event)) {
                     Text(
                         text = userStatus,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.serifAside(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -460,7 +461,7 @@ fun PostCard(
             }
             Text(
                 text = timestamp,
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.bodySmall.serifAside(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
             )
             val powBits = remember(event.id) { Nip13.verifyDifficulty(event) }

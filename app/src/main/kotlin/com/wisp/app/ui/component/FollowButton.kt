@@ -1,5 +1,8 @@
 package com.wisp.app.ui.component
 
+import com.wisp.app.ui.theme.PinketInk
+import com.wisp.app.ui.theme.TinBrush
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -31,11 +34,19 @@ fun FollowButton(
     } else {
         // A plain Box rather than Button, so the corner rim sits on the
         // visible pill and not on Button's larger touch area.
+        // Lantern look: a tin pill on a dark screen, dark ink on a light one.
+        val lantern = WispThemeColors.lantern
+        val onDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
         Box(
             modifier = modifier
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary)
-                .cornerRim(WispThemeColors.hintColor, MaterialTheme.colorScheme.primary)
+                .then(
+                    if (lantern && onDark) Modifier.background(TinBrush)
+                    else if (lantern) Modifier.background(MaterialTheme.colorScheme.onSurface)
+                    else Modifier
+                        .background(MaterialTheme.colorScheme.primary)
+                        .cornerRim(WispThemeColors.hintColor, MaterialTheme.colorScheme.primary)
+                )
                 .clickable(role = Role.Button, onClick = onClick)
                 .defaultMinSize(minWidth = 58.dp, minHeight = 40.dp)
                 .padding(horizontal = 24.dp),
@@ -44,7 +55,9 @@ fun FollowButton(
             Text(
                 "Follow",
                 style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onPrimary
+                color = if (lantern && onDark) PinketInk
+                    else if (lantern) MaterialTheme.colorScheme.background
+                    else MaterialTheme.colorScheme.onPrimary
             )
         }
     }

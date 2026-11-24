@@ -361,7 +361,15 @@ private class DerivedArgs(
 fun customScheme(accent: Color, dark: Boolean): ColorScheme {
     val lightPrimary = ensureContrast(accent, Color(0xFFECECEC), 4.5)
     val primary = if (dark) accent else lightPrimary
-    val base = if (dark) PinketDark else PinketLight
+    // On the default accent, text and icons take the lantern's tin instead of neutral gray.
+    val lantern = accent.toArgb() == PinketOrange.toArgb()
+    val neutral = if (dark) PinketDark else PinketLight
+    val base = if (!lantern) neutral else neutral.copy(
+        onBackground = if (dark) TinDark else TinLight,
+        onSurface = if (dark) TinDark else TinLight,
+        onSurfaceVariant = if (dark) TinDimDark else TinDimLight,
+        inverseSurface = if (dark) TinDark else neutral.inverseSurface
+    )
     return base.copy(
         primary = primary,
         onPrimary = inkOrWhite(primary),

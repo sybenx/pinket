@@ -78,6 +78,8 @@ import kotlinx.coroutines.launch
 private val AVATAR_SIZE = 44.dp
 private val AVATAR_GAP = 4.dp
 
+private const val SHOW_AVATAR_WALL = false
+
 @Composable
 fun SplashScreen(
     viewModel: SplashViewModel,
@@ -109,7 +111,8 @@ fun SplashScreen(
 
         val rows = (pics.size + cols - 1) / cols
 
-        Column(modifier = Modifier.align(Alignment.TopCenter)) {
+        // Lantern look: the lantern alone on the dark, no wall of profile pictures.
+        if (SHOW_AVATAR_WALL) Column(modifier = Modifier.align(Alignment.TopCenter)) {
             for (row in 0 until rows) {
                 Row {
                     for (col in 0 until cols) {
@@ -180,7 +183,7 @@ fun SplashScreen(
                 initialValue = 0f,
                 targetValue = -8f,
                 animationSpec = infiniteRepeatable(
-                    animation = tween(1200, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                    animation = tween(3500, easing = androidx.compose.animation.core.FastOutSlowInEasing),
                     repeatMode = RepeatMode.Reverse
                 ),
                 label = "bob"
@@ -189,7 +192,7 @@ fun SplashScreen(
                 initialValue = -3f,
                 targetValue = 3f,
                 animationSpec = infiniteRepeatable(
-                    animation = tween(2400, easing = LinearEasing),
+                    animation = tween(3500, easing = androidx.compose.animation.core.FastOutSlowInEasing),
                     repeatMode = RepeatMode.Reverse
                 ),
                 label = "sway"
@@ -199,10 +202,11 @@ fun SplashScreen(
                 contentDescription = stringResource(R.string.cd_wisp_logo),
                 tint = Color.Unspecified,
                 modifier = Modifier
-                    .size(96.dp)
+                    .size(260.dp)
                     .graphicsLayer {
                         translationY = bob * density
-                        rotationZ = sway
+                        rotationZ = sway * 0.5f
+                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0.1f)
                     }
                     .drawBehind {
                         drawCircle(
@@ -219,13 +223,13 @@ fun SplashScreen(
                     }
             )
             Text(
-                text = stringResource(R.string.auth_wisp),
+                text = "Pinket",
                 style = MaterialTheme.typography.titleLarge.copy(
-                    fontFamily = FontFamily.SansSerif,
-                    fontSize = 56.sp,
-                    fontWeight = FontWeight.W500
+                    fontFamily = com.wisp.app.ui.theme.PinketSerif,
+                    fontSize = 46.sp,
+                    fontWeight = FontWeight.Normal
                 ),
-                color = Color.White
+                color = Color(0xFFE9E3DA)
             )
 
             Spacer(Modifier.height(32.dp))
