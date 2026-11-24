@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
+
 package com.wisp.app.ui.theme
 
 import androidx.compose.animation.core.RepeatMode
@@ -31,6 +33,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -43,9 +46,19 @@ import com.wisp.app.R
 
 /** Libre Caslon Text (SIL OFL), for names, titles and the wordmark. */
 val PinketSerif = FontFamily(
-    Font(R.font.libre_caslon_text, FontWeight.Normal),
-    Font(R.font.libre_caslon_text, FontWeight.Bold),
-    Font(R.font.libre_caslon_text_italic, FontWeight.Normal, FontStyle.Italic)
+    // One variable file per style: the weight has to be asked for by axis.
+    Font(
+        R.font.libre_caslon_text, FontWeight.Normal,
+        variationSettings = FontVariation.Settings(FontVariation.weight(400))
+    ),
+    Font(
+        R.font.libre_caslon_text, FontWeight.Bold,
+        variationSettings = FontVariation.Settings(FontVariation.weight(700))
+    ),
+    Font(
+        R.font.libre_caslon_text_italic, FontWeight.Normal, FontStyle.Italic,
+        variationSettings = FontVariation.Settings(FontVariation.weight(400))
+    )
 )
 
 /** A text style set in the serif, bold: names and titles. */
