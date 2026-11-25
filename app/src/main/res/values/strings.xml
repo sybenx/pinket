@@ -401,6 +401,9 @@
     <string name="emoji_dialog_add">Add</string>
     <string name="emoji_dialog_cancel">Cancel</string>
     <string name="emoji_done_format">Done (%d)</string>
+    <string name="emoji_search">Search emoji</string>
+    <string name="emoji_search_clear">Clear</string>
+    <string name="emoji_search_none">No emoji by that name</string>
 
     <!-- Blossom/Media Servers Screen -->
     <string name="blossom_title">Media Servers</string>

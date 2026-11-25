@@ -28,6 +28,16 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -102,6 +112,26 @@ fun EmojiLibrarySheet(
         }.toMap()
     }
 
+    // Search: names for the standard set load once, off the main thread
+    var query by remember { mutableStateOf("") }
+    val searching = query.isNotBlank()
+    val context = LocalContext.current
+    val emojiNames by produceState(emptyList<EmojiSearch.Entry>()) {
+        value = withContext(Dispatchers.Default) { EmojiSearch.load(context) }
+    }
+    val searchItems = remember(query, emojiNames, customEmojiMap) {
+        if (!searching) emptyList() else buildList<GridEntry> {
+            EmojiSearch.searchShortcodes(customEmojiMap.keys, query).forEachIndexed { idx, shortcode ->
+                add(GridEntry.CustomEmoji(idx, shortcode, customEmojiMap.getValue(shortcode)))
+            }
+            EmojiSearch.search(emojiNames, query).forEachIndexed { idx, emoji ->
+                add(GridEntry.Emoji(-1, idx, emoji))
+            }
+        }
+    }
+    val shownItems = if (searching) searchItems else gridItems
+    LaunchedEffect(query) { if (searching) gridState.scrollToItem(0) }
+
     val currentCategoryIndex by remember {
         derivedStateOf {
             val firstVisible = gridState.firstVisibleItemIndex
@@ -118,8 +148,27 @@ fun EmojiLibrarySheet(
         sheetState = sheetState
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text(stringResource(R.string.emoji_search)) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                trailingIcon = {
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { query = "" }) {
+                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.emoji_search_clear))
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp)
+            )
+
             // Category tabs
-            ScrollableTabRow(
+            if (!searching) ScrollableTabRow(
                 selectedTabIndex = currentCategoryIndex,
                 edgePadding = 8.dp,
                 divider = {}
@@ -149,6 +198,15 @@ fun EmojiLibrarySheet(
                 }
             }
 
+            if (searching && searchItems.isEmpty() && emojiNames.isNotEmpty()) {
+                Text(
+                    text = stringResource(R.string.emoji_search_none),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
+                )
+            }
+
             // Emoji grid
             LazyVerticalGrid(
                 columns = GridCells.Fixed(8),
@@ -157,7 +215,7 @@ fun EmojiLibrarySheet(
                 modifier = Modifier.weight(1f)
             ) {
                 items(
-                    items = gridItems,
+                    items = shownItems,
                     key = { item ->
                         when (item) {
                             is GridEntry.Header -> "header_${item.categoryIndex}"
