@@ -171,7 +171,7 @@ fun ActionBar(
                     resolvedEmojis = resolvedEmojis,
                     unicodeEmojis = unicodeEmojis,
                     onOpenEmojiLibrary = onOpenEmojiLibrary,
-                    onRemoveEmoji = emojiRemoveCallback
+                    onRemoveEmoji = { emojiRemoveCallback?.invoke(it) }
                 )
             }
         }

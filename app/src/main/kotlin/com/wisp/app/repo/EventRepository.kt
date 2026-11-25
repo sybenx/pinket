@@ -215,6 +215,9 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
     val reactionVersion: StateFlow<Int> = _reactionVersion
     // Per-target-event dedup sets — evict with the same lifecycle as their count caches
     private val countedReactionIds = LruCache<String, MutableSet<String>>(15000)
+    // Each counted reaction: its own id -> what it added, so a deletion can take it back off
+    private class CountedReaction(val targetId: String, val emoji: String, val pubkey: String)
+    private val countedReactions = LruCache<String, CountedReaction>(30000)
     private val countedZapIds = LruCache<String, MutableSet<String>>(15000)
     // Reply dedup: parentEventId -> set of counted reply event IDs (LRU so it evicts with replyCounts)
     private val countedReplyIds = LruCache<String, MutableSet<String>>(15000)
@@ -640,6 +643,10 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
             5 -> {
                 val deletedIds = Nip09.getDeletedEventIds(event)
                 for (id in deletedIds) {
+                    if (uncountReaction(id, event.pubkey)) {
+                        deletedEventsRepo?.markDeleted(id)
+                        continue
+                    }
                     val target = eventCache[id] ?: notePublisher?.publications?.value?.get(id)?.event
                     if (target == null || target.pubkey == event.pubkey) {
                         deletedEventsRepo?.markDeleted(id)
@@ -704,6 +711,36 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
         }
     }
 
+    /**
+     * Takes a reaction back off its post when its author deletes it. False when [reactionId]
+     * isn't a reaction we counted, or [deleterPubkey] didn't write it.
+     */
+    private fun uncountReaction(reactionId: String, deleterPubkey: String): Boolean {
+        val counted = countedReactions.get(reactionId) ?: return false
+        if (counted.pubkey != deleterPubkey) return false
+        countedReactions.remove(reactionId)
+        val mine = userReactions.get("${counted.targetId}:${counted.pubkey}")
+        if (mine != null) {
+            // Already taken off here when this phone sent the deletion
+            if (counted.pubkey == currentUserPubkey && mine[counted.emoji] != reactionId) return true
+            mine.remove(counted.emoji, reactionId)
+        }
+        reactionCounts.get(counted.targetId)?.let { counts ->
+            val current = counts[counted.emoji] ?: 0
+            if (current > 1) counts[counted.emoji] = current - 1 else counts.remove(counted.emoji)
+        }
+        reactionDetails.get(counted.targetId)?.let { details ->
+            val pubkeys = details[counted.emoji]
+            if (pubkeys != null) {
+                synchronized(pubkeys) { pubkeys.remove(counted.pubkey) }
+                if (pubkeys.isEmpty()) details.remove(counted.emoji)
+            }
+        }
+        reactionDirty = true
+        markEventVersionDirty(counted.targetId)
+        return true
+    }
+
     private fun addReaction(event: NostrEvent) {
         if (isWotFiltered(event.pubkey, event.kind)) return
         val targetEventId = event.tags.lastOrNull { it.size >= 2 && it[0] == "e" }?.get(1)
@@ -714,6 +751,7 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
             ?: mutableSetOf<String>().also { countedReactionIds.put(targetEventId, it) }
         synchronized(dedupSet) { if (!dedupSet.add(event.id)) return }
         val emoji = if (event.content.isBlank() || event.content == "+") "❤️" else event.content
+        countedReactions.put(event.id, CountedReaction(targetEventId, emoji, event.pubkey))
 
         // Cache custom emoji URLs from reaction event tags
         val emojiTags = Nip30.parseEmojiTags(event)
@@ -1997,6 +2035,7 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
         userReposts.evictAll()
         userZaps.evictAll()
         countedReactionIds.evictAll()
+        countedReactions.evictAll()
         countedZapIds.evictAll()
         countedReplyIds.evictAll()
         rootReplyIds.clear()

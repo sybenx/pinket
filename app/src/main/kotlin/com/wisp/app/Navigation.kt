@@ -203,6 +203,14 @@ fun WispNavHost(
     val navController = rememberNavController()
     val authViewModel: AuthViewModel = viewModel()
     val feedViewModel: FeedViewModel = viewModel()
+    // Long-press on an emoji in the reaction popup takes it off the quick list. Set here so
+    // it works on every screen that shows posts, not only the feed.
+    DisposableEffect(feedViewModel) {
+        com.wisp.app.ui.component.emojiRemoveCallback = { emoji ->
+            feedViewModel.customEmojiRepo.removeUnicodeEmoji(emoji)
+        }
+        onDispose { com.wisp.app.ui.component.emojiRemoveCallback = null }
+    }
     val composeViewModel: ComposeViewModel = viewModel()
     val relayViewModel: RelayViewModel = viewModel()
     val profileViewModel: ProfileViewModel = viewModel()

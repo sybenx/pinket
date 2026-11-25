@@ -313,6 +313,9 @@ class SocialActionManager(
                     relayPool.sendToWriteRelays(ClientMessage.event(deletionEvent))
                     eventRepo.removeReaction(event.id, myPubkey, emoji)
                 } else {
+                    // The plain heart is "+" on the wire (NIP-25). Other apps drop a reaction
+                    // with nothing in it.
+                    val content = emoji.ifBlank { "+" }
                     val shortcodeMatch = Nip30.shortcodeRegex.matchEntire(emoji)
                     var tags: List<List<String>> = if (shortcodeMatch != null) {
                         val shortcode = shortcodeMatch.groupValues[1]
@@ -339,7 +342,7 @@ class SocialActionManager(
                             Nip13.mine(
                                 pubkeyHex = myPubkey,
                                 kind = 7,
-                                content = emoji,
+                                content = content,
                                 tags = tags,
                                 targetDifficulty = powPrefs.getReactionDifficulty(),
                                 createdAt = pinned
@@ -351,7 +354,7 @@ class SocialActionManager(
                         createdAt = System.currentTimeMillis() / 1000
                     }
 
-                    val reactionEvent = s.signEvent(kind = 7, content = emoji, tags = tags, createdAt = createdAt)
+                    val reactionEvent = s.signEvent(kind = 7, content = content, tags = tags, createdAt = createdAt)
                     val msg = ClientMessage.event(reactionEvent)
                     outboxRouter.publishToInbox(msg, event.pubkey)
                     eventRepo.addEvent(reactionEvent)

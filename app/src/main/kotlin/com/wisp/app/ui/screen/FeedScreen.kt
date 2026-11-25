@@ -350,14 +350,6 @@ fun FeedScreen(
 
     val isWalletConnected = viewModel.activeWalletProvider.hasConnection()
 
-    // Set up emoji removal bridge so long-press in reaction popup can remove emojis
-    DisposableEffect(Unit) {
-        com.wisp.app.ui.component.emojiRemoveCallback = { emoji ->
-            viewModel.customEmojiRepo.removeUnicodeEmoji(emoji)
-        }
-        onDispose { com.wisp.app.ui.component.emojiRemoveCallback = null }
-    }
-
     val noteActions = remember(
         viewModel, userPubkey, followList, onReply, onReact, onRepost, onQuote,
         onProfileClick, onQuotedNoteClick, onAddToList, onHashtagClick,
