@@ -104,7 +104,8 @@ fun WispTheme(
     // preset derives a full 36-role scheme from its own colors, so nothing
     // falls back to the M3 baseline. Unknown names resolve to custom.
     val preset = remember(themeName) { Themes.getTheme(themeName) }
-    val colorScheme = remember(preset, isDarkTheme, accentColor) {
+    val oldLook = PinketLook.old
+    val colorScheme = remember(preset, isDarkTheme, accentColor, oldLook) {
         when (preset.name) {
             "custom" -> customScheme(accentColor, isDarkTheme)
             else -> {
@@ -132,7 +133,7 @@ fun WispTheme(
                     paidColor = if (isDarkTheme) Color(0xFFFFD54F) else Color(0xFFC9A000),
                     signatureBrush = SolidColor(colorScheme.primary),
                     hintColor = if (twoTone) PinketTwoTone.hint(isDarkTheme) else colorScheme.primary,
-                    lantern = twoTone
+                    lantern = twoTone && !PinketLook.old
                 )
             }
             else -> {

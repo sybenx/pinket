@@ -265,6 +265,32 @@ fun InterfaceScreen(
 
             Spacer(Modifier.height(24.dp))
 
+            // The look from before the lantern
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.settings_old_look), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        stringResource(R.string.settings_old_look_description),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = com.wisp.app.ui.theme.PinketLook.old,
+                    onCheckedChange = {
+                        interfacePrefs.setOldLook(it)
+                        com.wisp.app.ui.theme.PinketLook.old = it
+                    },
+                    colors = wispSwitchColors()
+                )
+            }
+
+            Spacer(Modifier.height(24.dp))
+
             // Popular Themes section
             var themesExpanded by remember { mutableStateOf(false) }
 

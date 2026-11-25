@@ -78,7 +78,6 @@ import kotlinx.coroutines.launch
 private val AVATAR_SIZE = 44.dp
 private val AVATAR_GAP = 4.dp
 
-private const val SHOW_AVATAR_WALL = false
 
 @Composable
 fun SplashScreen(
@@ -112,7 +111,7 @@ fun SplashScreen(
         val rows = (pics.size + cols - 1) / cols
 
         // Lantern look: the lantern alone on the dark, no wall of profile pictures.
-        if (SHOW_AVATAR_WALL) Column(modifier = Modifier.align(Alignment.TopCenter)) {
+        if (com.wisp.app.ui.theme.PinketLook.old) Column(modifier = Modifier.align(Alignment.TopCenter)) {
             for (row in 0 until rows) {
                 Row {
                     for (col in 0 until cols) {
@@ -183,7 +182,7 @@ fun SplashScreen(
                 initialValue = 0f,
                 targetValue = -8f,
                 animationSpec = infiniteRepeatable(
-                    animation = tween(3500, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                    animation = tween(if (com.wisp.app.ui.theme.PinketLook.old) 1200 else 3500, easing = androidx.compose.animation.core.FastOutSlowInEasing),
                     repeatMode = RepeatMode.Reverse
                 ),
                 label = "bob"
@@ -192,7 +191,8 @@ fun SplashScreen(
                 initialValue = -3f,
                 targetValue = 3f,
                 animationSpec = infiniteRepeatable(
-                    animation = tween(3500, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                    animation = if (com.wisp.app.ui.theme.PinketLook.old) tween(2400, easing = LinearEasing)
+                        else tween(3500, easing = androidx.compose.animation.core.FastOutSlowInEasing),
                     repeatMode = RepeatMode.Reverse
                 ),
                 label = "sway"
@@ -202,11 +202,15 @@ fun SplashScreen(
                 contentDescription = stringResource(R.string.cd_wisp_logo),
                 tint = Color.Unspecified,
                 modifier = Modifier
-                    .size(260.dp)
+                    .size(if (com.wisp.app.ui.theme.PinketLook.old) 96.dp else 260.dp)
                     .graphicsLayer {
                         translationY = bob * density
-                        rotationZ = sway * 0.5f
-                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0.1f)
+                        if (com.wisp.app.ui.theme.PinketLook.old) {
+                            rotationZ = sway
+                        } else {
+                            rotationZ = sway * 0.5f
+                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0.1f)
+                        }
                     }
                     .drawBehind {
                         drawCircle(
@@ -223,13 +227,17 @@ fun SplashScreen(
                     }
             )
             Text(
-                text = "Pinket",
-                style = MaterialTheme.typography.titleLarge.copy(
+                text = if (com.wisp.app.ui.theme.PinketLook.old) stringResource(R.string.auth_wisp) else "Pinket",
+                style = if (com.wisp.app.ui.theme.PinketLook.old) MaterialTheme.typography.titleLarge.copy(
+                    fontFamily = FontFamily.SansSerif,
+                    fontSize = 56.sp,
+                    fontWeight = FontWeight.W500
+                ) else MaterialTheme.typography.titleLarge.copy(
                     fontFamily = com.wisp.app.ui.theme.PinketSerif,
                     fontSize = 46.sp,
                     fontWeight = FontWeight.Normal
                 ),
-                color = Color(0xFFE9E3DA)
+                color = if (com.wisp.app.ui.theme.PinketLook.old) Color.White else Color(0xFFE9E3DA)
             )
 
             Spacer(Modifier.height(32.dp))

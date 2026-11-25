@@ -1563,10 +1563,11 @@ private fun ProfileHeader(
         ) {
             Text(
                 text = profile?.displayString ?: "",
-                style = MaterialTheme.typography.titleLarge.copy(
-                    fontFamily = com.wisp.app.ui.theme.PinketSerif,
-                    fontSize = 24.sp
-                ),
+                style = if (com.wisp.app.ui.theme.PinketLook.old) MaterialTheme.typography.titleLarge
+                    else MaterialTheme.typography.titleLarge.copy(
+                        fontFamily = com.wisp.app.ui.theme.PinketSerif,
+                        fontSize = 24.sp
+                    ),
                 color = MaterialTheme.colorScheme.onSurface
             )
             if (followsYou) {

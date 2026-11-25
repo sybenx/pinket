@@ -18,6 +18,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,6 +45,15 @@ import com.wisp.app.R
 // light marks the few things that are alive (compose, unread, new posts,
 // refreshing). Surfaces stay neutral gray.
 
+/**
+ * Which look the app wears. [old] brings back the look from before the
+ * lantern: plain gray text, the coral accent on live things, no serif.
+ * Read from the interface settings at launch and flipped from there.
+ */
+object PinketLook {
+    var old by androidx.compose.runtime.mutableStateOf(false)
+}
+
 /** Libre Caslon Text (SIL OFL), for names, titles and the wordmark. */
 val PinketSerif = FontFamily(
     // One variable file per style: the weight has to be asked for by axis.
@@ -62,7 +72,7 @@ val PinketSerif = FontFamily(
 )
 
 /** A text style set in the serif, bold: names and titles. */
-fun TextStyle.serifName(): TextStyle = copy(fontFamily = PinketSerif, fontWeight = FontWeight.Bold)
+fun TextStyle.serifName(): TextStyle = if (PinketLook.old) this else copy(fontFamily = PinketSerif, fontWeight = FontWeight.Bold)
 
 /** A text style set in the serif, italic: times and status lines. */
 fun TextStyle.serifAside(): TextStyle =
@@ -206,6 +216,10 @@ fun LanternRefreshIndicator(fraction: () -> Float, isRefreshing: Boolean, modifi
 /** An unlit lantern over a short line: an empty list. */
 @Composable
 fun UnlitLantern(text: String, modifier: Modifier = Modifier) {
+    if (PinketLook.old) {
+        androidx.compose.material3.Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
+        return
+    }
     androidx.compose.foundation.layout.Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally

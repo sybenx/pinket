@@ -443,7 +443,8 @@ fun PostCard(
                 if (userStatus != null && !Nip10.isReply(event)) {
                     Text(
                         text = userStatus,
-                        style = MaterialTheme.typography.bodySmall.serifAside(),
+                        style = if (com.wisp.app.ui.theme.PinketLook.old) MaterialTheme.typography.bodySmall.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
+                            else MaterialTheme.typography.bodySmall.serifAside(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -461,7 +462,8 @@ fun PostCard(
             }
             Text(
                 text = timestamp,
-                style = MaterialTheme.typography.bodySmall.serifAside(),
+                style = if (com.wisp.app.ui.theme.PinketLook.old) MaterialTheme.typography.labelSmall
+                    else MaterialTheme.typography.bodySmall.serifAside(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
             )
             val powBits = remember(event.id) { Nip13.verifyDifficulty(event) }

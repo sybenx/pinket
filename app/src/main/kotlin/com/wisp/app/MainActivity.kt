@@ -43,6 +43,7 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         deepLinkUri.value = intent?.data?.toString()
         com.wisp.app.notify.DmNotifications.schedule(this)
+        com.wisp.app.ui.theme.PinketLook.old = InterfacePreferences(this).isOldLook()
         setContent {
             val prefs = remember { getSharedPreferences("wisp_settings", Context.MODE_PRIVATE) }
             val interfacePrefs = remember { InterfacePreferences(this@MainActivity) }

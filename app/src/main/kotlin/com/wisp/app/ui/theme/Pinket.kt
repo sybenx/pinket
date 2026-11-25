@@ -362,7 +362,7 @@ fun customScheme(accent: Color, dark: Boolean): ColorScheme {
     val lightPrimary = ensureContrast(accent, Color(0xFFECECEC), 4.5)
     val primary = if (dark) accent else lightPrimary
     // On the default accent, text and icons take the lantern's tin instead of neutral gray.
-    val lantern = accent.toArgb() == PinketOrange.toArgb()
+    val lantern = accent.toArgb() == PinketOrange.toArgb() && !PinketLook.old
     val neutral = if (dark) PinketDark else PinketLight
     val base = if (!lantern) neutral else neutral.copy(
         onBackground = if (dark) TinDark else TinLight,

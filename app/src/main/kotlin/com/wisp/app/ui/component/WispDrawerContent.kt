@@ -221,7 +221,8 @@ fun WispDrawerContent(
             ) {
                 Text(
                     text = profile?.displayString ?: "Anonymous",
-                    style = MaterialTheme.typography.titleLarge.copy(fontFamily = com.wisp.app.ui.theme.PinketSerif),
+                    style = if (com.wisp.app.ui.theme.PinketLook.old) MaterialTheme.typography.titleMedium
+                        else MaterialTheme.typography.titleLarge.copy(fontFamily = com.wisp.app.ui.theme.PinketSerif),
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f, fill = false)
                 )
@@ -577,9 +578,23 @@ fun WispDrawerContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 16.dp),
-            horizontalArrangement = Arrangement.Start,
+            horizontalArrangement = if (com.wisp.app.ui.theme.PinketLook.old) Arrangement.Center else Arrangement.Start,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (com.wisp.app.ui.theme.PinketLook.old) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_wisp_logo),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "pinket v$versionName",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                )
+            } else {
             androidx.compose.foundation.Image(
                 painter = painterResource(R.drawable.ic_wisp_logo),
                 contentDescription = null,
@@ -600,6 +615,7 @@ fun WispDrawerContent(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
             }
         }
         }

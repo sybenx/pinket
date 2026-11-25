@@ -326,7 +326,8 @@ fun NotificationsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             stringResource(R.string.nav_notifications),
-                            style = MaterialTheme.typography.titleLarge.copy(fontFamily = com.wisp.app.ui.theme.PinketSerif),
+                            style = if (com.wisp.app.ui.theme.PinketLook.old) MaterialTheme.typography.titleMedium
+                                else MaterialTheme.typography.titleLarge.copy(fontFamily = com.wisp.app.ui.theme.PinketSerif),
                             maxLines = 1
                         )
                         Text(

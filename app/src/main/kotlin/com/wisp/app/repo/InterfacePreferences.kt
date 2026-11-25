@@ -35,6 +35,10 @@ class InterfacePreferences(context: Context) {
     fun getAccentColor(): Int = prefs.getInt("accent_color", 0xFFFF8A3D.toInt())
     fun setAccentColor(colorInt: Int) = prefs.edit().putInt("accent_color", colorInt).apply()
 
+    /** The look from before the lantern: gray text, coral accent, no serif. */
+    fun isOldLook(): Boolean = prefs.getBoolean("old_look", false)
+    fun setOldLook(enabled: Boolean) = prefs.edit().putBoolean("old_look", enabled).apply()
+
     fun isLargeText(): Boolean = prefs.getBoolean("large_text", false)
     fun setLargeText(enabled: Boolean) = prefs.edit().putBoolean("large_text", enabled).apply()
 
